@@ -1,12 +1,7 @@
-console.log('Script starting...');
-
-// Fonction pour logger dans la div de debug
+// Fonction de debug désactivée en production pour éviter la fuite d'informations
 function debug(message) {
-    console.log(message);
-    const debugDiv = document.getElementById('debug');
-    if (debugDiv) {
-        debugDiv.textContent = message;
-    }
+    // No-op en production. Décommenter la ligne suivante pour le développement :
+    // console.log(message);
 }
 
 // Fonction pour attendre que le DOM soit prêt
@@ -79,22 +74,16 @@ function waitForDOM(callback, maxAttempts = 10) {
 
 // Fonction principale de l'application
 function initApp() {
-    console.log('Initialisation de l\'application...');
-
     // Attendre que les éléments soient disponibles
     waitForElement('#departementSelect', (departementSelect) => {
         waitForElement('#communeSelect', (communeSelect) => {
-            console.log('Éléments trouvés, configuration des événements...');
-
             // Configuration des événements
             departementSelect.addEventListener('change', (e) => {
-                console.log('Changement de département:', e.target.value);
                 loadCommunes(e.target.value);
                 hideResults();
             });
 
             communeSelect.addEventListener('change', (e) => {
-                console.log('Changement de commune:', e.target.value);
                 if (e.target.value) {
                     loadAnalyses(e.target.value);
                     hideResults();
@@ -266,25 +255,31 @@ function initializeCalculator(baseWater) {
     const baseWaterParams = document.getElementById('baseWaterParams');
     const modifiedWaterParams = document.getElementById('modifiedWaterParams');
 
-    // Fonction pour créer l'affichage des paramètres
+    // Fonction pour créer l'affichage des paramètres (sécurisé contre XSS)
     const createParameterDisplay = (value, unit, target) => {
         const isInRange = value >= target.min && value <= target.max;
-        const color = isInRange ? 'text-green-600' : 'text-red-600';
-        return `<span class="${color}">${value.toFixed(1)} ${unit}</span>`;
+        const span = document.createElement('span');
+        span.className = isInRange ? 'text-green-600' : 'text-red-600';
+        span.textContent = `${value.toFixed(1)} ${unit}`;
+        return span;
     };
 
-    // Afficher les paramètres initiaux
+    // Afficher les paramètres initiaux (sécurisé contre XSS - pas de innerHTML)
     const displayParameters = (container, water) => {
-        container.innerHTML = Object.entries(PARAMETERS_OF_INTEREST)
-            .filter(([name]) => name !== 'TAC' && name !== 'PH') // Filtrer TAC et PH
-            .map(([name, info]) => {
+        container.innerHTML = '';
+        Object.entries(PARAMETERS_OF_INTEREST)
+            .filter(([name]) => name !== 'TAC' && name !== 'PH')
+            .forEach(([name, info]) => {
                 const value = water[name] || 0;
-                return `<div class="flex justify-between items-center p-3 rounded-lg bg-slate-700/30 border border-slate-600/30">
-                    <span class="font-medium text-slate-300">${name}:</span>
-                    ${createParameterDisplay(value, info.unit, info.target)}
-                </div>`;
-            })
-            .join('');
+                const row = document.createElement('div');
+                row.className = 'flex justify-between items-center p-3 rounded-lg bg-slate-700/30 border border-slate-600/30';
+                const label = document.createElement('span');
+                label.className = 'font-medium text-slate-300';
+                label.textContent = `${name}:`;
+                row.appendChild(label);
+                row.appendChild(createParameterDisplay(value, info.unit, info.target));
+                container.appendChild(row);
+            });
     };
 
     // Afficher l'eau de base
@@ -393,8 +388,14 @@ const loadDepartements = async () => {
                 'Accept': 'application/json'
             }
         });
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
         debug('Réponse reçue de l\'API départements');
         const departements = await response.json();
+        if (!Array.isArray(departements)) {
+            throw new Error('Format de réponse invalide');
+        }
         debug(`${departements.length} départements chargés`);
 
         departements.sort((a, b) => parseInt(a.code) - parseInt(b.code));
@@ -431,13 +432,19 @@ const loadCommunes = async (deptCode) => {
 
         if (!deptCode) return;
 
-        const response = await fetch(`https://geo.api.gouv.fr/departements/${deptCode}/communes`, {
+        const response = await fetch(`https://geo.api.gouv.fr/departements/${encodeURIComponent(deptCode)}/communes`, {
             headers: {
                 'Accept': 'application/json'
             }
         });
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
         debug('Réponse reçue de l\'API communes');
         const communes = await response.json();
+        if (!Array.isArray(communes)) {
+            throw new Error('Format de réponse invalide');
+        }
         debug(`${communes.length} communes chargées`);
 
         communes.sort((a, b) => a.nom.localeCompare(b.nom));
@@ -470,12 +477,18 @@ const loadAnalyses = async (communeCode) => {
         setLoading(true);
         hideError();
 
-        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/communes_udi?code_commune=${communeCode}&size=100`, {
+        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/communes_udi?code_commune=${encodeURIComponent(communeCode)}&size=100`, {
             headers: {
                 'Accept': 'application/json'
             }
         });
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
         const data = await response.json();
+        if (!data || typeof data.count === 'undefined' || !Array.isArray(data.data)) {
+            throw new Error('Format de réponse invalide');
+        }
 
         if (data.count === 0) {
             showError('Aucune donnée disponible pour cette commune');
@@ -512,12 +525,18 @@ const loadNetworkAnalyses = async (networkCode) => {
         hideError();
 
         const paramCodes = Object.values(PARAMETERS_OF_INTEREST).map(p => p.code).join(',');
-        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis?code_reseau=${networkCode}&code_parametre=${paramCodes}&size=5000`, {
+        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis?code_reseau=${encodeURIComponent(networkCode)}&code_parametre=${encodeURIComponent(paramCodes)}&size=5000`, {
             headers: {
                 'Accept': 'application/json'
             }
         });
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
         const data = await response.json();
+        if (!data || typeof data.count === 'undefined' || !Array.isArray(data.data)) {
+            throw new Error('Format de réponse invalide');
+        }
 
         if (data.count === 0) {
             showError('Aucune analyse disponible pour ce réseau');
@@ -618,19 +637,39 @@ const displayCurrentValues = (parameterGroups) => {
         card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
 
         const lastAnalysis = analyses[0];
-        card.innerHTML = `
-            <div class="flex justify-between items-start mb-4">
-                <h3 class="text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors">${name}</h3>
-                <div class="p-2 rounded-lg bg-slate-700/30 text-sky-500">
-                    <i class="fas fa-atom"></i>
-                </div>
-            </div>
-            <p class="text-3xl font-bold text-white mb-2">${lastAnalysis.resultat_numerique} <span class="text-sm text-slate-500 font-normal ml-1">${PARAMETERS_OF_INTEREST[name].unit}</span></p>
-            <p class="text-xs text-slate-500 mt-2 flex items-center gap-1">
-                <i class="far fa-clock"></i>
-                ${formatDate(lastAnalysis.date_prelevement)}
-            </p>
-        `;
+
+        // Construction sécurisée du DOM (pas de innerHTML avec des données API)
+        const header = document.createElement('div');
+        header.className = 'flex justify-between items-start mb-4';
+        const h3 = document.createElement('h3');
+        h3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
+        h3.textContent = name;
+        const iconDiv = document.createElement('div');
+        iconDiv.className = 'p-2 rounded-lg bg-slate-700/30 text-sky-500';
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-atom';
+        iconDiv.appendChild(icon);
+        header.appendChild(h3);
+        header.appendChild(iconDiv);
+
+        const valueP = document.createElement('p');
+        valueP.className = 'text-3xl font-bold text-white mb-2';
+        valueP.textContent = lastAnalysis.resultat_numerique + ' ';
+        const unitSpan = document.createElement('span');
+        unitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
+        unitSpan.textContent = PARAMETERS_OF_INTEREST[name].unit;
+        valueP.appendChild(unitSpan);
+
+        const dateP = document.createElement('p');
+        dateP.className = 'text-xs text-slate-500 mt-2 flex items-center gap-1';
+        const clockIcon = document.createElement('i');
+        clockIcon.className = 'far fa-clock';
+        dateP.appendChild(clockIcon);
+        dateP.appendChild(document.createTextNode(' ' + formatDate(lastAnalysis.date_prelevement)));
+
+        card.appendChild(header);
+        card.appendChild(valueP);
+        card.appendChild(dateP);
 
         const container = document.getElementById('currentParameters');
         if (container) {
@@ -652,19 +691,38 @@ const displayCurrentValues = (parameterGroups) => {
         if (hco3Value !== null) {
             const card = document.createElement('div');
             card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
-            card.innerHTML = `
-                <div class="flex justify-between items-start mb-4">
-                    <h3 class="text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors">HCO3 (calculé)</h3>
-                    <div class="p-2 rounded-lg bg-slate-700/30 text-amber-500">
-                        <i class="fas fa-calculator"></i>
-                    </div>
-                </div>
-                <p class="text-3xl font-bold text-white mb-2">${hco3Value.toFixed(1)} <span class="text-sm text-slate-500 font-normal ml-1">mg/L</span></p>
-                <p class="text-xs text-slate-500 mt-2 flex items-center gap-1">
-                    <i class="far fa-clock"></i>
-                    Calculé à partir du TAC du ${formatDate(lastTac.date_prelevement)}
-                </p>
-            `;
+            // Construction sécurisée du DOM (pas de innerHTML avec des données API)
+            const hco3Header = document.createElement('div');
+            hco3Header.className = 'flex justify-between items-start mb-4';
+            const hco3H3 = document.createElement('h3');
+            hco3H3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
+            hco3H3.textContent = 'HCO3 (calculé)';
+            const hco3IconDiv = document.createElement('div');
+            hco3IconDiv.className = 'p-2 rounded-lg bg-slate-700/30 text-amber-500';
+            const hco3Icon = document.createElement('i');
+            hco3Icon.className = 'fas fa-calculator';
+            hco3IconDiv.appendChild(hco3Icon);
+            hco3Header.appendChild(hco3H3);
+            hco3Header.appendChild(hco3IconDiv);
+
+            const hco3ValueP = document.createElement('p');
+            hco3ValueP.className = 'text-3xl font-bold text-white mb-2';
+            hco3ValueP.textContent = hco3Value.toFixed(1) + ' ';
+            const hco3UnitSpan = document.createElement('span');
+            hco3UnitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
+            hco3UnitSpan.textContent = 'mg/L';
+            hco3ValueP.appendChild(hco3UnitSpan);
+
+            const hco3DateP = document.createElement('p');
+            hco3DateP.className = 'text-xs text-slate-500 mt-2 flex items-center gap-1';
+            const hco3ClockIcon = document.createElement('i');
+            hco3ClockIcon.className = 'far fa-clock';
+            hco3DateP.appendChild(hco3ClockIcon);
+            hco3DateP.appendChild(document.createTextNode(' Calculé à partir du TAC du ' + formatDate(lastTac.date_prelevement)));
+
+            card.appendChild(hco3Header);
+            card.appendChild(hco3ValueP);
+            card.appendChild(hco3DateP);
             const container = document.getElementById('currentParameters');
             if (container) {
                 const grid = container.querySelector('.grid');

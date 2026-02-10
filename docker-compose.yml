@@ -1,12 +1,8 @@
-version: '3'
-
 services:
   web:
     build: .
     container_name: eau-app
     restart: unless-stopped
-    ports:
-      - "8081:80"
     networks:
       - npm_default
 

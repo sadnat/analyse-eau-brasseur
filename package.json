@@ -1,14 +1,9 @@
 {
   "name": "eau-app",
-  "version": "1.0.0",
-  "description": "Application de visualisation des données sur l'eau",
-  "main": "app.js",
+  "version": "2.0.0",
+  "description": "Application de visualisation des données sur l'eau pour brasseurs",
   "scripts": {
-    "start": "node app.js",
     "build": "mkdir -p dist && cp -r index.html app.js dist/"
-  },
-  "dependencies": {
-    "express": "^4.18.2"
   },
   "devDependencies": {
     "tailwindcss": "^3.4.1"

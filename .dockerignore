@@ -13,3 +13,6 @@ __pycache__
 .idea
 Dockerfile
 docker-compose.yml
+package.json
+package-lock.json
+tailwind.config.js
