@@ -6,13 +6,8 @@ README.md
 .DS_Store
 .env
 .env.*
-*.md
 __pycache__
 *.pyc
 .vscode
 .idea
-Dockerfile
 docker-compose.yml
-package.json
-package-lock.json
-tailwind.config.js

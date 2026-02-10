@@ -1,21 +1,29 @@
-# Étape de production
-FROM nginx:alpine
+# Stage 1 : Build - Compilation Tailwind CSS
+FROM node:alpine AS build
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY tailwind.config.js ./
+COPY src/input.css ./src/
+COPY index.html app.js ./
+RUN npx tailwindcss -i ./src/input.css -o ./styles.css --minify
 
-# Définir le répertoire de travail
+# Stage 2 : Production - Nginx statique
+FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
-# Copier d'abord la configuration Nginx
+# Configuration Nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copier tous les fichiers statiques
-COPY . .
+# Fichiers statiques
+COPY index.html app.js favicon.svg ./
 
-# S'assurer que nginx peut lire les fichiers
+# CSS compile depuis le stage build
+COPY --from=build /app/styles.css ./
+
+# Permissions
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 
-# Exposer le port 80
 EXPOSE 80
-
-# Démarrer Nginx
 CMD ["nginx", "-g", "daemon off;"]
