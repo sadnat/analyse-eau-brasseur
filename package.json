@@ -1,6 +1,6 @@
 {
   "name": "eau-app",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Application de visualisation des données sur l'eau pour brasseurs",
   "scripts": {
     "build": "mkdir -p dist && cp -r index.html app.js dist/"
