@@ -741,6 +741,38 @@ const displayCurrentValues = (parameterGroups) => {
         currentParameters.classList.remove('hidden');
     }
 
+    // Afficher les informations sur la source des données
+    const dataSourceInfo = document.getElementById('dataSourceInfo');
+    if (dataSourceInfo) {
+        // Trouver la date de prélèvement la plus récente parmi tous les paramètres
+        let latestDate = null;
+        Object.values(parameterGroups).forEach(analyses => {
+            if (analyses.length > 0) {
+                const date = luxon.DateTime.fromISO(analyses[0].date_prelevement);
+                if (!latestDate || date > latestDate) {
+                    latestDate = date;
+                }
+            }
+        });
+
+        dataSourceInfo.innerHTML = '';
+        const infoIcon = document.createElement('i');
+        infoIcon.className = 'fas fa-info-circle text-sky-500 flex-shrink-0';
+        dataSourceInfo.appendChild(infoIcon);
+
+        const infoText = document.createElement('span');
+        if (latestDate) {
+            infoText.textContent = 'Source : Hub\'Eau (eaufrance.fr) \u2014 Dernier prélèvement : ' +
+                latestDate.setLocale('fr').toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' }) +
+                ' \u2014 Mise à jour mensuelle, un décalage avec les données officielles (Orobnat) est possible.';
+        } else {
+            infoText.textContent = 'Source : Hub\'Eau (eaufrance.fr) \u2014 Mise à jour mensuelle.';
+        }
+        dataSourceInfo.appendChild(infoText);
+        dataSourceInfo.classList.remove('hidden');
+        dataSourceInfo.classList.add('flex', 'items-center', 'gap-3');
+    }
+
     // S'assurer que toutes les valeurs sont définies avant de les passer au calculateur
     Object.keys(PARAMETERS_OF_INTEREST).forEach(key => {
         if (!(key in currentValues)) {
