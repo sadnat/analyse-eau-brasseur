@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "sync": "node sync/index.js"
+    "sync": "node sync/index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

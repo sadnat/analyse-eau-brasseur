@@ -1,8 +1,7 @@
 const fs = require('fs');
-const path = require('path');
 const { pipeline } = require('stream/promises');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const { DB_DIR: DATA_DIR } = require('../db/connection');
 
 // Jeu de données data.gouv « Résultats du contrôle sanitaire de l'eau distribuée commune par commune »
 const DATASET_API_URL = 'https://www.data.gouv.fr/api/1/datasets/5cf8d9ed8b4c4110294c841d/';

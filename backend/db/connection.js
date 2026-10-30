@@ -2,7 +2,8 @@ const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-const DB_DIR = path.join(__dirname, '..', 'data');
+// Dossier de données configurable (tests) via SISE_DATA_DIR
+const DB_DIR = process.env.SISE_DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DB_DIR, 'sise.db');
 
 let db = null;

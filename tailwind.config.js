@@ -3,6 +3,7 @@ module.exports = {
   content: [
     './index.html',
     './app.js',
+    './water.js',
   ],
   safelist: [
     // Classes dynamiques utilisées dans les badges source (app.js)

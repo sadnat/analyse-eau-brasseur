@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "Application de visualisation des données sur l'eau pour brasseurs",
   "scripts": {
-    "build": "mkdir -p dist && cp -r index.html app.js dist/"
+    "test": "node --test"
   },
   "devDependencies": {
+    "luxon": "3.4.4",
     "tailwindcss": "^3.4.1"
   }
 }

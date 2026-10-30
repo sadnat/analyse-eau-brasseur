@@ -15,7 +15,16 @@ docker compose up -d
 
 # Forcer une re-synchronisation SISE-Eaux
 docker compose exec backend node sync/index.js
+
+# Test de fumée navigateur sur l'application déployée (Chromium headless, nécessite Internet)
+docker run --rm --network analyse-eau-brasseur_backend -v "$PWD/e2e:/e2e:ro" \
+  mcr.microsoft.com/playwright:v1.48.2-jammy \
+  sh -c 'cp /e2e/smoke.js /tmp && cd /tmp && npm i -s playwright@1.48.2 && node smoke.js'
 ```
+
+Les tests unitaires (`node:test`) s'exécutent pendant `docker compose build` ; un échec interrompt le build :
+- `tests/water.test.js` : logique métier frontend (calculs, solveur, fusion des sources)
+- `backend/tests/sise.test.js` : import d'un ZIP SISE réduit (`backend/tests/fixtures/dis-test.zip`) puis API
 
 En production : `https://eau.twibox.fr` (exposé par Traefik via le réseau Docker externe `traefik`).
 
@@ -24,6 +33,11 @@ En production : `https://eau.twibox.fr` (exposé par Traefik via le réseau Dock
 ### Deux services Docker
 - **web** (nginx) : sert le frontend statique, proxy `/api/` vers le backend (réseaux `traefik` + `backend`)
 - **backend** (Node.js/Express) : API SISE-Eaux, télécharge et indexe les CSV dans SQLite (réseau privé `backend` uniquement)
+
+### Frontend — fichiers
+- `water.js` : logique métier sans DOM (sources, paramètres, calculs, solveur, fusion) — chargé avant `app.js`, constantes globales partagées, exporté pour les tests Node
+- `app.js` : DOM, appels API, graphiques
+- `index.html` référence `app.js?v=dev`, `water.js?v=dev`, `styles.css?v=dev` : le Dockerfile remplace `dev` par l'empreinte md5 du fichier ; nginx sert JS/CSS avec un cache d'un an et le HTML en `no-cache`. Ne pas modifier ces numéros à la main
 
 ### Frontend — Flux de données hybride (app.js)
 1. `loadDepartements()` → API `geo.api.gouv.fr/departements`
@@ -71,7 +85,7 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 
 ## Stack technique
 
-- **Frontend** : JS vanilla, Tailwind CSS 3 (compilé en multi-stage Docker), Chart.js 3.7 + Luxon 3.4 (CDN+SRI), Font Awesome 6
+- **Frontend** : JS vanilla, Tailwind CSS 3 (compilé en multi-stage Docker), Chart.js 4.4 + chartjs-adapter-luxon + Luxon 3.4 (CDN+SRI), Font Awesome 6
 - **Backend** : Node.js, Express, better-sqlite3, csv-parse, unzipper, node-cron
 - **Infra** : nginx:alpine (proxy + headers sécu), node:alpine (backend), volume Docker pour SQLite
 
@@ -79,6 +93,9 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 
 - Code et commentaires en **français**
 - Sécurité XSS : DOM construit via `document.createElement()` + `textContent`, jamais `innerHTML` avec des données API
+- CSP sans `'unsafe-inline'` pour les scripts : aucun `<script>` inline ni attribut `on*=` dans le HTML
+- Requêtes réseau avec `AbortSignal.timeout(FETCH_TIMEOUT_MS)` : une source lente ne doit pas bloquer l'autre
+- Toute classe Tailwind utilisée en JS doit apparaître en entier dans `app.js` ou `water.js` (fichiers scannés par Tailwind)
 - `debug()` est un no-op en production (activable avec `?debug=1`)
 - CSS custom dans `src/input.css` (palette "Deep Ocean", glass-effect). Les classes Tailwind dynamiques (couleurs des badges source) sont dans la `safelist` de `tailwind.config.js`
 - Le réseau Docker `traefik` doit exister (réseau externe partagé avec le reverse proxy)

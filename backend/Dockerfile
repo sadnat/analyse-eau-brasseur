@@ -1,9 +1,12 @@
-# Stage 1 : Build - compilation de better-sqlite3 (outils de compilation non conserves)
+# Stage 1 : Build - compilation de better-sqlite3 et tests (outils de compilation non conserves)
 FROM node:24-alpine AS build
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+# Tests (node:test) : un échec interrompt le build
+COPY . .
+RUN npm test
 
 # Stage 2 : Production
 FROM node:24-alpine
