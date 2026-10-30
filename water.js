@@ -443,8 +443,6 @@ const toBeerXmlWaters = (entries) => {
     return `<?xml version="1.0" encoding="UTF-8"?>\n<WATERS>\n${records.join('\n')}\n</WATERS>\n`;
 };
 
-// Clé de tri des départements (Corse : 2A et 2B se placent entre 19 et 21)
-const departementSortKey = (code) => parseFloat(code.replace('2A', '20.1').replace('2B', '20.2'));
 
 // Export pour les tests Node (sans effet dans le navigateur)
 if (typeof module !== 'undefined') {
@@ -472,7 +470,6 @@ if (typeof module !== 'undefined') {
         computeYearStats,
         getDataFreshnessInfo,
         buildParameterGroups,
-        departementSortKey,
         QUALITY_PARAMETERS,
         formatValue,
         groupByParameter,

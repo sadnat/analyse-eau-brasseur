@@ -39,10 +39,17 @@ En production : `https://eau.twibox.fr` (exposé par Traefik via le réseau Dock
 - `app.js` : DOM, appels API, graphiques
 - `index.html` référence `app.js?v=dev`, `water.js?v=dev`, `styles.css?v=dev` : le Dockerfile remplace `dev` par l'empreinte md5 du fichier ; nginx sert JS/CSS avec un cache d'un an et le HTML en `no-cache`. Ne pas modifier ces numéros à la main
 
+### Frontend — Parcours (app.js)
+- Recherche de commune `#communeSearch` (combobox ARIA) : `searchCommunes()` → `geo.api.gouv.fr/communes` (`?nom=` avec `boost=population`, ou `?codePostal=` trié par population) ; « Ma position » → `?lat=&lon=` (`Permissions-Policy: geolocation=(self)`)
+- `chooseCommune()` passe l'en-tête en mode compact (`body.has-selection`) et masque l'accueil `#welcome`
+- Réseau unique sélectionné automatiquement (`displayNetworks`) ; boutons en `aria-pressed`
+- Résultats en onglets `#tabs` (Mon eau / Calculateur / Historique), motif ARIA tablist, onglet actif dans l'URL (`onglet=`)
+- Erreurs : `showError(message, retry)` affiche un bouton « Réessayer » ; si **toutes** les sources échouent, c'est une erreur (et non « aucune donnée »)
+- Chargement : squelettes `#loading` + annonce `aria-live` (`announce()`)
+
 ### Frontend — Flux de données hybride (app.js)
-1. `loadDepartements()` → API `geo.api.gouv.fr/departements`
-2. `loadCommunes(deptCode)` → API `geo.api.gouv.fr/departements/{code}/communes`
-3. `loadAnalyses(communeCode)` → **Hub'Eau + SISE-Eaux en parallèle** → fusionne les réseaux
+1. `chooseCommune()` / `applySelection()` (lien partagé, dernière visite, exemple)
+2. `loadAnalyses(communeCode)` → **Hub'Eau + SISE-Eaux en parallèle** → fusionne les réseaux
 4. `loadNetworkAnalyses(networkCode)` → **fusionne les deux sources** via `mergeAnalyses()` (dédoublonnage par `code_prelevement` + paramètre, SISE prioritaire) : historique long Hub'Eau + valeurs récentes SISE
 5. `displayAnalyses(analyses)` → cartes (dernière valeur, min/moy/max sur 12 mois, badge source/date par mesure) + graphiques
 6. `updateCalculator()` → calculateur de minéraux
@@ -88,7 +95,7 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 - `#brewSheet` : fiche construite à la demande par `buildBrewSheet()`, seule visible en `@media print` (`src/input.css`)
 
 ### Sélection partageable
-`saveSelection()` / `restoreSelection()` : `?dept=…&commune=…&reseau=…` dans l'URL (lien partageable) + dernière sélection en localStorage (`eau-brasseur:selection`).
+`saveSelection()` / `restoreSelection()` / `applySelection()` : `?dept=…&commune=…&reseau=…` dans l'URL (lien partageable, rétrocompatible) + dernière sélection en localStorage (`eau-brasseur:selection`). Le libellé de la commune est relu via `geo.api.gouv.fr/communes/{code}`.
 
 ## Stack technique
 
@@ -104,6 +111,7 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 - Requêtes réseau avec `AbortSignal.timeout(FETCH_TIMEOUT_MS)` : une source lente ne doit pas bloquer l'autre
 - Toute classe Tailwind utilisée en JS doit apparaître en entier dans `app.js` ou `water.js` (fichiers scannés par Tailwind)
 - `debug()` est un no-op en production (activable avec `?debug=1`)
+- Icônes Font Awesome : leur `display: inline-block` l'emporte sur la classe Tailwind `hidden` — pour masquer une icône selon la taille d'écran, l'envelopper dans un `<span class="hidden sm:inline">`
 - CSS custom dans `src/input.css` (palette "Deep Ocean", glass-effect). Les classes Tailwind dynamiques (couleurs des badges source) sont dans la `safelist` de `tailwind.config.js`
 - Le réseau Docker `traefik` doit exister (réseau externe partagé avec le reverse proxy)
 - Dépendances verrouillées (`package-lock.json`, `npm ci`) : régénérer le lockfile dans Docker après modification d'un `package.json`

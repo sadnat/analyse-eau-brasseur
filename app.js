@@ -11,6 +11,7 @@ function debug(message) {
 
 // Sélection courante (département, commune, réseau) : reflétée dans l'URL et mémorisée localement
 const SELECTION_STORAGE_KEY = 'eau-brasseur:selection';
+let currentSelection = {};
 
 const saveSelection = (selection) => {
     const clean = sanitizeSelection(selection);
@@ -30,7 +31,7 @@ const saveSelection = (selection) => {
 // Sélection à restaurer : paramètres d'URL (lien partagé) sinon dernière sélection locale
 const readSelection = () => {
     const params = new URLSearchParams(window.location.search);
-    if (params.has('dept')) {
+    if (params.has('commune')) {
         return sanitizeSelection(Object.fromEntries(params));
     }
     try {
@@ -40,47 +41,272 @@ const readSelection = () => {
     }
 };
 
-// Rejouer la sélection : département → commune → réseau
-const restoreSelection = async () => {
-    const selection = readSelection();
-    const departementSelect = document.getElementById('departementSelect');
-    const communeSelect = document.getElementById('communeSelect');
-    const hasOption = (select, value) => Array.from(select.options).some(o => o.value === value);
+// --- Recherche de commune (geo.api.gouv.fr) ---
 
-    if (!selection.dept || !hasOption(departementSelect, selection.dept)) return;
-    departementSelect.value = selection.dept;
-    await loadCommunes(selection.dept);
+const GEO_API_URL = 'https://geo.api.gouv.fr/communes';
+const GEO_FIELDS = 'fields=nom,code,codesPostaux,departement,population';
+const SEARCH_DEBOUNCE_MS = 250;
+let searchTimer = null;
+let searchRequestId = 0;
+let searchResults = [];
+let activeSuggestion = -1;
 
-    if (!selection.commune || !hasOption(communeSelect, selection.commune)) return;
-    communeSelect.value = selection.commune;
-    await loadAnalyses(selection.commune);
+const fetchCommunes = async (query) => {
+    const response = await fetch(`${GEO_API_URL}?${query}&${GEO_FIELDS}`, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (!response.ok) throw new Error(`geo.api HTTP ${response.status}`);
+    const communes = await response.json();
+    if (!Array.isArray(communes)) throw new Error('Format de réponse invalide');
+    return communes;
+};
+
+// Libellé affiché d'une commune : « Foix (09000) — Ariège »
+const communeLabel = (commune, postalCode) => {
+    const cp = postalCode || (commune.codesPostaux || [])[0];
+    const dept = commune.departement ? ` — ${commune.departement.nom}` : '';
+    return `${commune.nom}${cp ? ` (${cp})` : ''}${dept}`;
+};
+
+const closeSuggestions = () => {
+    const list = document.getElementById('communeSuggestions');
+    const input = document.getElementById('communeSearch');
+    list.classList.add('hidden');
+    list.innerHTML = '';
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    searchResults = [];
+    activeSuggestion = -1;
+};
+
+const highlightSuggestion = (index) => {
+    const input = document.getElementById('communeSearch');
+    const options = document.querySelectorAll('#communeSuggestions [role="option"]');
+    activeSuggestion = index;
+    options.forEach((option, i) => {
+        const active = i === index;
+        option.setAttribute('aria-selected', String(active));
+        option.classList.toggle('bg-sky-600/30', active);
+        if (active) {
+            input.setAttribute('aria-activedescendant', option.id);
+            option.scrollIntoView({ block: 'nearest' });
+        }
+    });
+};
+
+const renderSuggestions = (communes, postalCode) => {
+    const list = document.getElementById('communeSuggestions');
+    const input = document.getElementById('communeSearch');
+    list.innerHTML = '';
+    searchResults = communes;
+    activeSuggestion = -1;
+
+    if (communes.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'px-4 py-3 text-sm text-slate-400';
+        empty.textContent = 'Aucune commune trouvée.';
+        list.appendChild(empty);
+    }
+    communes.forEach((commune, i) => {
+        const option = document.createElement('li');
+        option.id = `commune-option-${i}`;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.className = 'px-4 py-2 cursor-pointer hover:bg-sky-600/20';
+        const name = document.createElement('span');
+        name.className = 'block text-white';
+        name.textContent = commune.nom;
+        const details = document.createElement('span');
+        details.className = 'block text-xs text-slate-400';
+        const cp = postalCode || (commune.codesPostaux || [])[0] || '';
+        details.textContent = [cp, commune.departement ? `${commune.departement.nom} (${commune.departement.code})` : '']
+            .filter(Boolean).join(' · ');
+        option.append(name, details);
+        // mousedown plutôt que click : se déclenche avant la perte de focus du champ
+        option.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            chooseCommune(commune, postalCode);
+        });
+        list.appendChild(option);
+    });
+    list.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+};
+
+const searchCommunes = async (text) => {
+    const value = text.trim();
+    const requestId = ++searchRequestId;
+    let query = null;
+    let postalCode = null;
+    if (/^\d{5}$/.test(value)) {
+        query = `codePostal=${value}`;
+        postalCode = value;
+    } else if (value.length >= 2 && !/^\d+$/.test(value)) {
+        query = `nom=${encodeURIComponent(value)}&boost=population&limit=8`;
+    }
+    if (!query) {
+        closeSuggestions();
+        return;
+    }
+    try {
+        const communes = await fetchCommunes(query);
+        if (requestId !== searchRequestId) return;
+        // Un code postal peut couvrir de nombreuses communes : les plus peuplées d'abord
+        if (postalCode) communes.sort((a, b) => (b.population || 0) - (a.population || 0));
+        renderSuggestions(communes.slice(0, 8), postalCode);
+    } catch (error) {
+        if (requestId !== searchRequestId) return;
+        closeSuggestions();
+        showError('Recherche de communes indisponible pour le moment.', () => searchCommunes(text));
+        console.error(error);
+    }
+};
+
+// Commune choisie : en-tête compact, puis chargement des réseaux
+const chooseCommune = (commune, postalCode) => {
+    closeSuggestions();
+    document.getElementById('communeSearch').value = communeLabel(commune, postalCode);
+    currentSelection = {
+        dept: commune.departement ? commune.departement.code : undefined,
+        commune: commune.code,
+        communeName: commune.nom
+    };
+    saveSelection(currentSelection);
+    document.body.classList.add('has-selection');
+    document.getElementById('welcome').classList.add('hidden');
+    hideResults();
+    hideError();
+    return loadAnalyses(commune.code);
+};
+
+// Commune correspondant à la position de l'utilisateur
+const locateUser = () => {
+    if (!navigator.geolocation) {
+        showError('La géolocalisation n\'est pas disponible dans ce navigateur.');
+        return;
+    }
+    announce('Recherche de votre position…');
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+        try {
+            const [commune] = await fetchCommunes(`lat=${coords.latitude}&lon=${coords.longitude}`);
+            if (!commune) throw new Error('Aucune commune à cette position');
+            chooseCommune(commune);
+        } catch (error) {
+            showError('Impossible de trouver la commune correspondant à votre position.', locateUser);
+            console.error(error);
+        }
+    }, () => {
+        showError('Position refusée ou indisponible : recherchez votre commune par son nom.');
+    }, { timeout: 10000, maximumAge: 600000 });
+};
+
+const initCommuneSearch = () => {
+    const input = document.getElementById('communeSearch');
+    input.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => searchCommunes(input.value), SEARCH_DEBOUNCE_MS);
+    });
+    input.addEventListener('keydown', (e) => {
+        const count = searchResults.length;
+        if (e.key === 'ArrowDown' && count > 0) {
+            e.preventDefault();
+            highlightSuggestion((activeSuggestion + 1) % count);
+        } else if (e.key === 'ArrowUp' && count > 0) {
+            e.preventDefault();
+            highlightSuggestion((activeSuggestion - 1 + count) % count);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (count > 0) chooseCommune(searchResults[Math.max(activeSuggestion, 0)]);
+        } else if (e.key === 'Escape') {
+            closeSuggestions();
+        }
+    });
+    input.addEventListener('blur', () => setTimeout(closeSuggestions, 150));
+    input.addEventListener('focus', () => input.select());
+    document.getElementById('searchForm').addEventListener('submit', (e) => e.preventDefault());
+    document.getElementById('locateMe').addEventListener('click', locateUser);
+};
+
+// --- Onglets des résultats ---
+
+const TABS = ['eau', 'calculateur', 'historique'];
+
+const activateTab = (name, { focus = false, updateUrl = true } = {}) => {
+    if (!TABS.includes(name)) name = 'eau';
+    TABS.forEach(tab => {
+        const button = document.getElementById(`tab-${tab}`);
+        const panel = document.getElementById(`panel-${tab}`);
+        const selected = tab === name;
+        button.setAttribute('aria-selected', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+        panel.hidden = !selected;
+        if (selected && focus) button.focus();
+    });
+    if (name === 'calculateur') renderCalculator();
+    if (updateUrl) {
+        const url = new URL(window.location.href);
+        if (name === 'eau') url.searchParams.delete('onglet');
+        else url.searchParams.set('onglet', name);
+        window.history.replaceState(null, '', url);
+    }
+};
+
+const initTabs = () => {
+    TABS.forEach((tab, index) => {
+        const button = document.getElementById(`tab-${tab}`);
+        button.addEventListener('click', () => activateTab(tab));
+        // Flèches gauche/droite, Début/Fin : navigation entre onglets (motif ARIA)
+        button.addEventListener('keydown', (e) => {
+            const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: TABS.length - 1 };
+            if (!(e.key in moves)) return;
+            e.preventDefault();
+            activateTab(TABS[(moves[e.key] + TABS.length) % TABS.length], { focus: true });
+        });
+    });
+    activateTab(new URLSearchParams(window.location.search).get('onglet') || 'eau', { updateUrl: false });
+};
+
+// --- Restauration d'une sélection (lien partagé, dernière visite, exemple) ---
+
+const applySelection = async (selection) => {
+    if (!selection.commune) return;
+    try {
+        const response = await fetch(`${GEO_API_URL}/${encodeURIComponent(selection.commune)}?${GEO_FIELDS}`, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+        });
+        if (!response.ok) throw new Error(`geo.api HTTP ${response.status}`);
+        await chooseCommune(await response.json());
+    } catch (error) {
+        showError('Impossible de retrouver la commune enregistrée : recherchez-la par son nom.');
+        console.error(error);
+        return;
+    }
 
     if (!selection.reseau) return;
-    const button = Array.from(document.querySelectorAll('#networkButtons button'))
-        .find(btn => btn.dataset.networkCode === selection.reseau);
-    if (button) button.click();
+    const button = document.querySelector(`#networkButtons button[data-network-code="${selection.reseau}"]`);
+    // Réseau unique : déjà sélectionné automatiquement
+    if (button && button.getAttribute('aria-pressed') !== 'true') button.click();
 };
+
+const restoreSelection = () => applySelection(readSelection());
+
+// Exemple : Foix (Ariège), réseau du centre-ville
+const EXAMPLE_SELECTION = { dept: '09', commune: '09122', reseau: '009001053' };
 
 // Fonction principale de l'application (script chargé en defer : le DOM est prêt)
 function initApp() {
-    const departementSelect = document.getElementById('departementSelect');
-    const communeSelect = document.getElementById('communeSelect');
-
-    departementSelect.addEventListener('change', (e) => {
-        saveSelection({ dept: e.target.value });
-        loadCommunes(e.target.value);
-        hideResults();
+    initCommuneSearch();
+    initTabs();
+    document.getElementById('tryExample').addEventListener('click', () => applySelection(EXAMPLE_SELECTION));
+    document.getElementById('retryButton').addEventListener('click', () => {
+        const retry = retryAction;
+        hideError();
+        if (retry) retry();
     });
-
-    communeSelect.addEventListener('change', (e) => {
-        saveSelection({ dept: departementSelect.value, commune: e.target.value });
-        if (e.target.value) {
-            loadAnalyses(e.target.value);
-        }
-        hideResults();
-    });
-
-    loadDepartements().then(restoreSelection);
+    updateSyncInfo();
+    restoreSelection();
 }
 
 // Couleurs pour les différents paramètres
@@ -308,16 +534,12 @@ const readCalculatorState = () => {
 };
 
 // Commune et réseau sélectionnés (codes et libellés)
-const readSelectionLabels = () => {
-    const communeSelect = document.getElementById('communeSelect');
-    const networkButton = document.querySelector('#networkButtons button.bg-sky-600');
-    return {
-        communeCode: communeSelect.value,
-        communeName: communeSelect.selectedOptions[0] ? communeSelect.selectedOptions[0].textContent : '',
-        networkCode: networkButton ? networkButton.dataset.networkCode : '',
-        networkName: networkButton ? networkButton.textContent : ''
-    };
-};
+const readSelectionLabels = () => ({
+    communeCode: currentSelection.commune || '',
+    communeName: currentSelection.communeName || '',
+    networkCode: currentSelection.reseau || '',
+    networkName: currentSelection.networkName || ''
+});
 
 // Nom d'un sel tel qu'affiché dans le calculateur (libellé + formule)
 const mineralLabel = (id) => {
@@ -455,16 +677,6 @@ const renderCalculator = () => {
 // Attacher les écouteurs du calculateur une seule fois
 function initializeCalculator() {
     if (calculatorInitialized) return;
-    const waterCalculator = document.getElementById('waterCalculator');
-    const openCalculatorBtn = document.getElementById('openCalculator');
-    if (!waterCalculator || !openCalculatorBtn) return;
-
-    openCalculatorBtn.addEventListener('click', () => {
-        waterCalculator.classList.toggle('hidden');
-        if (!waterCalculator.classList.contains('hidden')) {
-            renderCalculator();
-        }
-    });
 
     // Profils cibles
     const profileSelect = document.getElementById('targetProfile');
@@ -524,17 +736,12 @@ function updateCalculator(baseWaters) {
     const baseWaterMode = document.getElementById('baseWaterMode');
     calculatorBaseWater = baseWaters[baseWaterMode ? baseWaterMode.value : 'derniere'];
     initializeCalculator();
-
-    const waterCalculator = document.getElementById('waterCalculator');
-    if (waterCalculator) {
-        // Cacher le calculateur à chaque nouvelle sélection de réseau
-        waterCalculator.classList.add('hidden');
-    }
+    renderCalculator();
 }
 
 // Fonction pour cacher tous les résultats
 function hideResults() {
-    const elementsToHide = ['networkButtons', 'currentParameters', 'charts', 'waterCalculator'];
+    const elementsToHide = ['networkButtons', 'results'];
     elementsToHide.forEach(id => {
         const element = document.getElementById(id);
         if (element) {
@@ -543,128 +750,41 @@ function hideResults() {
     });
 }
 
-// Gestion des états de chargement
+// Annonce pour les lecteurs d'écran (zone aria-live)
+const announce = (message) => {
+    const status = document.getElementById('status');
+    if (status) status.textContent = message;
+};
+
+// Gestion des états de chargement : squelettes de cartes
 const setLoading = (isLoading) => {
     const loadingElement = document.getElementById('loading');
     if (loadingElement) {
         loadingElement.classList.toggle('hidden', !isLoading);
     }
+    announce(isLoading ? 'Chargement des analyses…' : '');
 };
 
-const showError = (message) => {
-    const errorElement = document.getElementById('error');
-    if (errorElement) {
-        errorElement.textContent = message;
-        errorElement.classList.remove('hidden');
-    }
+// Erreur affichée avec, si possible, une action « Réessayer »
+let retryAction = null;
+
+const showError = (message, retry = null) => {
+    retryAction = retry;
+    document.getElementById('errorMessage').textContent = message;
+    document.getElementById('retryButton').classList.toggle('hidden', !retry);
+    document.getElementById('error').classList.remove('hidden');
 };
 
 const hideError = () => {
-    const errorElement = document.getElementById('error');
-    if (errorElement) {
-        errorElement.classList.add('hidden');
-        errorElement.textContent = '';
-    }
-};
-
-// Chargement des départements
-const loadDepartements = async () => {
-    try {
-        setLoading(true);
-        debug('Chargement des départements...');
-        const response = await fetch('https://geo.api.gouv.fr/departements', {
-            headers: {
-                'Accept': 'application/json'
-            },
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-        });
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ${response.status}`);
-        }
-        debug('Réponse reçue de l\'API départements');
-        const departements = await response.json();
-        if (!Array.isArray(departements)) {
-            throw new Error('Format de réponse invalide');
-        }
-        debug(`${departements.length} départements chargés`);
-
-        departements.sort((a, b) => departementSortKey(a.code) - departementSortKey(b.code));
-        departements.forEach(dept => {
-            const option = document.createElement('option');
-            option.value = dept.code;
-            option.textContent = `${dept.code} - ${dept.nom}`;
-            const departementSelect = document.getElementById('departementSelect');
-            if (departementSelect) {
-                departementSelect.appendChild(option);
-            }
-        });
-        debug('Liste des départements mise à jour');
-    } catch (error) {
-        const errorMsg = 'Erreur lors du chargement des départements: ' + error.message;
-        showError(errorMsg);
-        debug(errorMsg);
-        console.error(error);
-    } finally {
-        setLoading(false);
-    }
-};
-
-// Chargement des communes d'un département
-const loadCommunes = async (deptCode) => {
-    try {
-        setLoading(true);
-        debug(`Chargement des communes pour le département ${deptCode}...`);
-        const communeSelect = document.getElementById('communeSelect');
-        if (communeSelect) {
-            communeSelect.innerHTML = '<option value="">Sélectionnez une commune...</option>';
-            communeSelect.disabled = true;
-        }
-
-        if (!deptCode) return;
-
-        const response = await fetch(`https://geo.api.gouv.fr/departements/${encodeURIComponent(deptCode)}/communes`, {
-            headers: {
-                'Accept': 'application/json'
-            },
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-        });
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ${response.status}`);
-        }
-        debug('Réponse reçue de l\'API communes');
-        const communes = await response.json();
-        if (!Array.isArray(communes)) {
-            throw new Error('Format de réponse invalide');
-        }
-        debug(`${communes.length} communes chargées`);
-
-        communes.sort((a, b) => a.nom.localeCompare(b.nom));
-        communes.forEach(commune => {
-            const option = document.createElement('option');
-            option.value = commune.code;
-            option.textContent = commune.nom;
-            if (communeSelect) {
-                communeSelect.appendChild(option);
-            }
-        });
-
-        if (communeSelect) {
-            communeSelect.disabled = false;
-        }
-        debug('Liste des communes mise à jour');
-    } catch (error) {
-        const errorMsg = 'Erreur lors du chargement des communes: ' + error.message;
-        showError(errorMsg);
-        debug(errorMsg);
-        console.error(error);
-    } finally {
-        setLoading(false);
-    }
+    retryAction = null;
+    document.getElementById('error').classList.add('hidden');
+    document.getElementById('errorMessage').textContent = '';
 };
 
 // Vérifier si le backend SISE-Eaux est disponible
 let siseAvailable = null;
 let siseLastCheck = 0;
+let siseLastSync = null;
 const SISE_CHECK_INTERVAL = 30000; // Re-vérifier toutes les 30s si indisponible
 const checkSiseBackend = async () => {
     const now = Date.now();
@@ -678,6 +798,7 @@ const checkSiseBackend = async () => {
         if (response.ok) {
             const health = await response.json();
             siseAvailable = health.status === 'ok' && health.record_count > 0;
+            siseLastSync = health.last_sync;
             if (siseAvailable) {
                 debug(`Backend SISE-Eaux disponible — ${health.record_count} résultats, dernière sync: ${health.last_sync}`);
             } else {
@@ -692,6 +813,13 @@ const checkSiseBackend = async () => {
         debug('Backend SISE-Eaux indisponible: ' + e.message);
     }
     return siseAvailable;
+};
+
+// Pied de page : date de la dernière synchronisation SISE-Eaux
+const updateSyncInfo = async () => {
+    if (!(await checkSiseBackend()) || !siseLastSync) return;
+    const date = luxon.DateTime.fromISO(siseLastSync).setLocale('fr').toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' });
+    document.getElementById('syncInfo').textContent = ` (SISE-Eaux synchronisé le ${date})`;
 };
 
 // Délai maximal des requêtes : une API lente ne doit pas bloquer l'affichage de l'autre source
@@ -748,6 +876,8 @@ const loadAnalyses = async (communeCode) => {
 
         const [hubEauData, siseData] = await Promise.all(promises);
         if (requestId !== currentRequestId) return;
+        // Toutes les sources en échec : panne réseau, pas absence de données
+        if (!hubEauData && !siseData) throw new Error('Aucune source joignable');
 
         // Fusionner les réseaux des deux sources (dédoublonnage par code_reseau)
         const uniqueNetworks = new Map();
@@ -767,7 +897,7 @@ const loadAnalyses = async (communeCode) => {
         addNetworks(siseData);
 
         if (uniqueNetworks.size === 0) {
-            showError('Aucune donnée disponible pour cette commune');
+            showError('Aucune analyse publiée pour cette commune.');
             return;
         }
 
@@ -777,7 +907,7 @@ const loadAnalyses = async (communeCode) => {
         displayNetworks(networks);
     } catch (error) {
         if (requestId !== currentRequestId) return;
-        showError('Erreur lors du chargement des réseaux');
+        showError('Les réseaux de cette commune n\'ont pas pu être chargés.', () => loadAnalyses(communeCode));
         console.error(error);
     } finally {
         if (requestId === currentRequestId) setLoading(false);
@@ -788,6 +918,7 @@ const loadAnalyses = async (communeCode) => {
 const loadNetworkAnalyses = async (networkCode) => {
     const requestId = ++currentRequestId;
     try {
+        document.getElementById('results').classList.add('hidden');
         setLoading(true);
         hideError();
 
@@ -801,6 +932,7 @@ const loadNetworkAnalyses = async (networkCode) => {
 
         const [hubEauData, siseData] = await Promise.all(promises);
         if (requestId !== currentRequestId) return;
+        if (!hubEauData && !siseData) throw new Error('Aucune source joignable');
 
         const analyses = mergeAnalyses([
             { data: siseData, source: DATA_SOURCES.SISE_EAUX },
@@ -809,68 +941,61 @@ const loadNetworkAnalyses = async (networkCode) => {
         debug(`Analyses fusionnées : ${analyses.length} (Hub'Eau ${hubEauData?.data?.length ?? 0}, SISE ${siseData?.data?.length ?? 0})`);
 
         if (analyses.length === 0) {
-            showError('Aucune analyse disponible pour ce réseau');
+            showError('Aucune analyse disponible pour ce réseau.', () => loadNetworkAnalyses(networkCode));
             return;
         }
 
         displayAnalyses(analyses);
     } catch (error) {
         if (requestId !== currentRequestId) return;
-        showError('Erreur lors du chargement des analyses');
+        showError('Les analyses de ce réseau n\'ont pas pu être chargées.', () => loadNetworkAnalyses(networkCode));
         console.error(error);
     } finally {
         if (requestId === currentRequestId) setLoading(false);
     }
 };
 
-// Affichage des réseaux disponibles
-const displayNetworks = (networks) => {
-    const container = document.getElementById('networkButtons');
-    if (container) {
-        const div = container.querySelector('div');
-        if (div) {
-            div.innerHTML = '';
-        }
-    }
+// Styles des boutons de réseau (sélectionné ou non)
+const NETWORK_BUTTON_BASE = 'px-5 py-3 rounded-xl border font-medium transition-all focus:outline-none focus:ring-2 focus:ring-sky-500/60';
+const NETWORK_BUTTON_IDLE = 'bg-slate-800/80 text-slate-200 border-slate-600 hover:border-sky-500 hover:text-white';
+const NETWORK_BUTTON_ACTIVE = 'bg-sky-600 text-white border-sky-500 shadow-lg shadow-sky-500/20';
 
-    networks.forEach(network => {
+const selectNetwork = (button, network) => {
+    document.querySelectorAll('#networkButtons button').forEach(btn => {
+        btn.setAttribute('aria-pressed', 'false');
+        btn.className = `${NETWORK_BUTTON_BASE} ${NETWORK_BUTTON_IDLE}`;
+    });
+    button.setAttribute('aria-pressed', 'true');
+    button.className = `${NETWORK_BUTTON_BASE} ${NETWORK_BUTTON_ACTIVE}`;
+
+    currentSelection = { ...currentSelection, reseau: network.code, networkName: network.name };
+    saveSelection(currentSelection);
+    loadNetworkAnalyses(network.code);
+};
+
+// Affichage des réseaux disponibles ; un réseau unique est sélectionné automatiquement
+const displayNetworks = (networks) => {
+    const section = document.getElementById('networkButtons');
+    const list = document.getElementById('networkList');
+    list.innerHTML = '';
+    document.getElementById('networkHint').textContent = networks.length > 1
+        ? 'Votre commune est desservie par plusieurs réseaux : choisissez celui de votre quartier.'
+        : 'Réseau qui dessert votre commune :';
+
+    const buttons = networks.map(network => {
         const button = document.createElement('button');
-        button.className = 'px-6 py-3 bg-slate-800/80 text-slate-300 rounded-xl hover:bg-sky-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all duration-300 border border-slate-700 hover:border-sky-500 shadow-lg hover:shadow-sky-500/20 font-medium';
+        button.type = 'button';
+        button.className = `${NETWORK_BUTTON_BASE} ${NETWORK_BUTTON_IDLE}`;
+        button.setAttribute('aria-pressed', 'false');
         button.textContent = network.name;
         button.dataset.networkCode = network.code;
-        button.onclick = () => {
-            // Mise à jour visuelle du bouton sélectionné
-            const container = document.getElementById('networkButtons');
-            if (container) {
-                const buttons = container.querySelectorAll('button');
-                buttons.forEach(btn => {
-                    btn.classList.remove('bg-sky-600', 'text-white', 'border-sky-500', 'shadow-sky-500/20');
-                    btn.classList.add('bg-slate-800/80', 'text-slate-300', 'border-slate-700');
-                });
-            }
-            button.classList.remove('bg-slate-800/80', 'text-slate-300', 'border-slate-700');
-            button.classList.add('bg-sky-600', 'text-white', 'border-sky-500', 'shadow-sky-500/20');
-
-            saveSelection({
-                dept: document.getElementById('departementSelect').value,
-                commune: document.getElementById('communeSelect').value,
-                reseau: network.code
-            });
-            loadNetworkAnalyses(network.code);
-        };
-        const container = document.getElementById('networkButtons');
-        if (container) {
-            const div = container.querySelector('div');
-            if (div) {
-                div.appendChild(button);
-            }
-        }
+        button.addEventListener('click', () => selectNetwork(button, network));
+        list.appendChild(button);
+        return button;
     });
 
-    const networkButtons = document.getElementById('networkButtons');
-    if (networkButtons) {
-        networkButtons.classList.remove('hidden');
-    }
+    section.classList.remove('hidden');
+    if (buttons.length === 1) buttons[0].click();
 };
 
 // Affichage des analyses fusionnées
@@ -991,7 +1116,7 @@ const displayCurrentValues = (parameterGroups, labels, usedSources) => {
         grid.appendChild(createParameterCard(name, labels[name], analyses));
     });
 
-    container.classList.remove('hidden');
+    document.getElementById('results').classList.remove('hidden');
 
     // Bandeau global de source et fraîcheur des données
     displayDataSourceBanner(parameterGroups, usedSources);
@@ -1172,10 +1297,6 @@ const displayCharts = (parameterGroups, labels) => {
         chartsGrid.appendChild(createChart(name, labels[name], analyses));
     });
 
-    const charts = document.getElementById('charts');
-    if (charts) {
-        charts.classList.remove('hidden');
-    }
 };
 
 // Démarrer l'application

@@ -166,13 +166,7 @@ test('statistiques : seules les mesures des 12 mois précédant la dernière com
     assert.deepEqual(stats, { n: 2, min: 10, max: 20, avg: 15 });
 });
 
-// --- Sélection et tri ---
-
-test('tri des départements : Corse entre 19 et 21, DOM à la fin', () => {
-    const codes = ['21', '2B', '01', '971', '2A', '19', '02'];
-    codes.sort((a, b) => w.departementSortKey(a) - w.departementSortKey(b));
-    assert.deepEqual(codes, ['01', '02', '19', '2A', '2B', '21', '971']);
-});
+// --- Sélection ---
 
 test('sélection : codes mal formés rejetés', () => {
     assert.deepEqual(
