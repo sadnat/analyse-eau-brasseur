@@ -313,3 +313,13 @@ test('historique : filtrage par période depuis la dernière mesure, ordre chron
     assert.deepEqual(w.filterByPeriod([], '1an'), []);
     assert.equal(analyses[0].value, 20, 'tableau source non trié en place');
 });
+
+// --- Calculateur ---
+
+test('écart à la cible : tolérance de 15 % (10 mg/L au moins)', () => {
+    assert.equal(w.profileDeviation(110, 100), 'ok');
+    assert.equal(w.profileDeviation(15, 5), 'ok'); // 10 mg/L minimum
+    assert.equal(w.profileDeviation(140, 100), 'proche');
+    assert.equal(w.profileDeviation(200, 100), 'loin');
+    assert.equal(w.profileDeviation(155, 150), 'ok');
+});

@@ -84,6 +84,12 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 `MINERAL_CONVERSIONS` contient les pourcentages de conversion pour 7 sels (gypse, sel d'Epsom, etc.), `ION_KEYS` fait le lien élément → paramètre.
 `calculateMineralAdditions()` calcule l'impact sur la composition de l'eau en mg/L.
 
+Onglet « Calculateur » : 3 étapes (eau de base et volume, profil cible, sels) + panneau de résultat `#calcPanel` collant sur grand écran.
+- Champs de sels générés depuis `SALTS` (app.js, source unique des libellés) avec boutons −/+ (pas de 0,1 g) ; `MINERAL_INPUT_IDS` en dérive
+- `renderIonBars()` : barre de l'eau de base, barre après ajouts colorée selon `profileDeviation()` (water.js), repère de cible ; `renderCompactIndicators()` pour le panneau
+- Garder le panneau plus court que la colonne des étapes, sinon il ne peut plus rester collé
+- Mobile : résumé fixe `#calcSummaryBar` en bas d'écran, visible seulement quand l'onglet calculateur l'est (il est dans le panneau d'onglet)
+
 ### Onglet « Mon eau » (lisibilité)
 - Ordre : synthèse `#waterSummary` (`summarizeWater()`), sources, indicateurs, alertes qualité, puis détail `#parameterCards`
 - `PARAMETERS_OF_INTEREST` : `label`/`symbol` pour l'affichage (les clés `'CALCIUM (CA)'`… restent les identifiants internes), `range` = repère brassage de la jauge (absent pour pH, TAC, HCO3 : dépend du style), `scale` = échelle fixe (pH)

@@ -173,185 +173,102 @@
 
             <!-- Onglet : calculateur -->
             <section id="panel-calculateur" role="tabpanel" aria-labelledby="tab-calculateur" tabindex="0" hidden>
-                <div id="waterCalculator" class="glass-effect rounded-2xl p-4 md:p-8 shadow-2xl">
-            <!-- Eau de base -->
-            <div class="mb-8 p-6 bg-slate-800/30 rounded-xl border border-slate-700/30">
-                <label for="baseWaterMode" class="block text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wide">Eau de base</label>
-                <div class="relative">
-                    <select id="baseWaterMode"
-                        class="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all appearance-none cursor-pointer">
-                        <option value="derniere">Dernière mesure</option>
-                        <option value="moyenne">Moyenne 12 mois</option>
-                        <option value="maximum">Maximum 12 mois (eau la plus minéralisée)</option>
-                    </select>
-                    <div class="absolute right-4 top-1/2 transform -translate-y-1/2 pointer-events-none text-slate-400">
-                        <i class="fas fa-chevron-down text-xs"></i>
+                <div id="waterCalculator" class="lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-6 lg:items-start">
+                    <div class="space-y-6">
+                        <!-- Étape 1 : eau de base et volume -->
+                        <section class="glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcStep1">
+                            <h3 id="calcStep1" class="text-lg font-semibold text-slate-200 mb-4 flex items-center"><span class="step-number">1</span>Eau de base et volume</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label for="baseWaterMode" class="block text-sm font-medium text-slate-300 mb-2">Eau du réseau</label>
+                                    <div class="relative">
+                                        <select id="baseWaterMode"
+                                            class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500 appearance-none cursor-pointer">
+                                            <option value="derniere">Dernière mesure</option>
+                                            <option value="moyenne">Moyenne 12 mois</option>
+                                            <option value="maximum">Maximum 12 mois (le plus minéralisé)</option>
+                                        </select>
+                                        <i class="fas fa-chevron-down text-xs absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" aria-hidden="true"></i>
+                                    </div>
+                                    <p class="mt-2 text-xs text-slate-400">La composition varie au fil de l'année : le maximum donne une marge de sécurité.</p>
+                                </div>
+                                <div>
+                                    <label for="waterQuantity" class="block text-sm font-medium text-slate-300 mb-2">Volume d'eau</label>
+                                    <div class="relative">
+                                        <input type="number" id="waterQuantity" value="20" min="1" step="1" inputmode="decimal"
+                                            class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 pr-10 text-white font-mono text-lg focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500">
+                                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true">L</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Étape 2 : profil cible -->
+                        <section class="glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcStep2">
+                            <h3 id="calcStep2" class="text-lg font-semibold text-slate-200 mb-4 flex items-center"><span class="step-number">2</span>Profil cible</h3>
+                            <label for="targetProfile" class="block text-sm font-medium text-slate-300 mb-2">Style ou eau de référence</label>
+                            <div class="flex flex-col sm:flex-row gap-3">
+                                <div class="relative flex-1">
+                                    <select id="targetProfile"
+                                        class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500 appearance-none cursor-pointer">
+                                        <option value="">Aucun profil</option>
+                                    </select>
+                                    <i class="fas fa-chevron-down text-xs absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" aria-hidden="true"></i>
+                                </div>
+                                <button type="button" id="suggestAdditions" disabled
+                                    class="px-5 py-3 rounded-xl bg-amber-500 text-slate-900 font-semibold hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-300 transition-all disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                                    <i class="fas fa-wand-magic-sparkles mr-2" aria-hidden="true"></i>Suggérer les ajouts
+                                </button>
+                            </div>
+                            <p id="profileDescription" class="mt-2 text-xs text-slate-400">Choisissez un profil pour comparer votre eau et obtenir une suggestion de sels.</p>
+                        </section>
+
+                        <!-- Étape 3 : sels -->
+                        <section class="glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcStep3">
+                            <div class="flex items-center justify-between gap-3 mb-4">
+                                <h3 id="calcStep3" class="text-lg font-semibold text-slate-200 flex items-center"><span class="step-number">3</span>Sels à ajouter</h3>
+                                <button type="button" id="resetAdditions" class="text-sm text-slate-300 hover:text-white underline-offset-4 hover:underline focus:outline-none focus:ring-2 focus:ring-sky-500/60 rounded">
+                                    <i class="fas fa-rotate-left mr-1" aria-hidden="true"></i>Remettre à zéro
+                                </button>
+                            </div>
+                            <!-- Champs générés par app.js (SALTS) -->
+                            <div id="saltInputs" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+                        </section>
                     </div>
-                </div>
-                <p class="mt-3 text-xs text-slate-400">La composition du réseau varie au fil de l'année : le maximum donne une marge de sécurité.</p>
-            </div>
 
-            <!-- Quantité d'eau -->
-            <div class="mb-8 p-6 bg-slate-800/30 rounded-xl border border-slate-700/30">
-                <label for="waterQuantity" class="block text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wide">Quantité d'eau
-                    (litres)</label>
-                <div class="relative">
-                    <input type="number" id="waterQuantity"
-                        class="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all font-mono text-lg"
-                        value="20" min="1">
-                    <i class="fas fa-tint absolute right-4 top-1/2 transform -translate-y-1/2 text-sky-500"></i>
-                </div>
-            </div>
-
-            <!-- Profil cible -->
-            <div class="mb-8 p-6 bg-slate-800/30 rounded-xl border border-slate-700/30">
-                <label for="targetProfile" class="block text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wide">Profil d'eau cible</label>
-                <div class="flex flex-col md:flex-row gap-4">
-                    <div class="relative flex-1">
-                        <select id="targetProfile"
-                            class="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all appearance-none cursor-pointer">
-                            <option value="">Aucun profil</option>
-                        </select>
-                        <div class="absolute right-4 top-1/2 transform -translate-y-1/2 pointer-events-none text-slate-400">
-                            <i class="fas fa-chevron-down text-xs"></i>
+                    <!-- Panneau de résultat (collant sur grand écran) -->
+                    <aside id="calcPanel" class="mt-6 lg:mt-0 lg:sticky lg:top-24 glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcPanelTitle">
+                        <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
+                        <h3 id="calcPanelTitle" class="text-lg font-semibold text-slate-200">Résultat</h3>
+                        <p class="text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+                            <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-1.5 rounded-full bg-slate-500"></span>eau de base</span>
+                            <span id="legendNeutral" class="inline-flex items-center gap-1"><span class="inline-block w-3 h-1.5 rounded-full bg-sky-400"></span>après ajouts</span>
+                            <span id="legendDeviation" class="hidden inline-flex items-center gap-1">après ajouts :
+                                <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>conforme
+                                <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>proche
+                                <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>loin</span>
+                            <span class="inline-flex items-center gap-1"><span class="inline-block w-0.5 h-3 bg-white"></span>cible</span>
+                        </p>
                         </div>
-                    </div>
-                    <button type="button" id="suggestAdditions" disabled
-                        class="px-6 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium hover:bg-amber-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                        <i class="fas fa-wand-magic-sparkles mr-2"></i>Suggérer les ajouts
-                    </button>
-                </div>
-                <p id="profileDescription" class="mt-3 text-xs text-slate-400"></p>
-            </div>
-
-            <!-- Ajout de minéraux -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <div class="space-y-6">
-                    <div>
-                        <label for="calciumSulfate" class="block text-sm font-medium text-slate-300 mb-2">Sulfate de calcium <span
-                                class="text-xs text-amber-500 font-mono ml-2">CaSO₄·2H₂O</span></label>
-                        <div class="relative group">
-                            <input type="number" id="calciumSulfate"
-                                class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                                value="0" min="0" step="0.1">
-                            <span
-                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                        <div id="ionBars" class="space-y-2" aria-live="polite"></div>
+                        <p id="solverNote" class="hidden mt-4 text-xs text-amber-300"></p>
+                        <div id="modifiedIndicators" class="mt-4 grid grid-cols-2 gap-2"></div>
+                        <div class="mt-4 grid grid-cols-2 gap-3">
+                            <button type="button" id="exportBeerXml"
+                                class="px-4 py-3 rounded-xl bg-sky-500/10 border border-sky-500/40 text-sky-300 font-medium hover:bg-sky-500/20 focus:outline-none focus:ring-2 focus:ring-sky-500/60 transition-all">
+                                <i class="fas fa-file-export mr-2" aria-hidden="true"></i>BeerXML
+                            </button>
+                            <button type="button" id="printSheet"
+                                class="px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-300 font-medium hover:bg-amber-500/20 focus:outline-none focus:ring-2 focus:ring-amber-400/60 transition-all">
+                                <i class="fas fa-print mr-2" aria-hidden="true"></i>Fiche
+                            </button>
                         </div>
-                    </div>
+                        <p class="mt-2 text-xs text-slate-400">Export BeerXML (BeerSmith, Brewer's Friend…) et fiche de brassage imprimable.</p>
+                    </aside>
                 </div>
-                <div class="space-y-6">
-                    <div>
-                        <label for="magnesiumSulfate" class="block text-sm font-medium text-slate-300 mb-2">Sulfate de magnésium <span
-                                class="text-xs text-amber-500 font-mono ml-2">MgSO₄·7H₂O</span></label>
-                        <div class="relative group">
-                            <input type="number" id="magnesiumSulfate"
-                                class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                                value="0" min="0" step="0.1">
-                            <span
-                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <label for="calciumChloride" class="block text-sm font-medium text-slate-300 mb-2">Chlorure de calcium <span
-                            class="text-xs text-amber-500 font-mono ml-2">CaCl₂·2H₂O</span></label>
-                    <div class="relative group">
-                        <input type="number" id="calciumChloride"
-                            class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                            value="0" min="0" step="0.1">
-                        <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                    </div>
-                </div>
-                <div>
-                    <label for="sodiumChloride" class="block text-sm font-medium text-slate-300 mb-2">Chlorure de sodium <span
-                            class="text-xs text-amber-500 font-mono ml-2">NaCl</span></label>
-                    <div class="relative group">
-                        <input type="number" id="sodiumChloride"
-                            class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                            value="0" min="0" step="0.1">
-                        <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                    </div>
-                </div>
-                <div>
-                    <label for="calciumCarbonate" class="block text-sm font-medium text-slate-300 mb-2">Carbonate de calcium <span
-                            class="text-xs text-amber-500 font-mono ml-2">CaCO₃</span></label>
-                    <div class="relative group">
-                        <input type="number" id="calciumCarbonate"
-                            class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                            value="0" min="0" step="0.1">
-                        <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                    </div>
-                </div>
-                <div>
-                    <label for="sodiumBicarbonate" class="block text-sm font-medium text-slate-300 mb-2">Bicarbonate de sodium <span
-                            class="text-xs text-amber-500 font-mono ml-2">NaHCO₃</span></label>
-                    <div class="relative group">
-                        <input type="number" id="sodiumBicarbonate"
-                            class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                            value="0" min="0" step="0.1">
-                        <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                    </div>
-                </div>
-                <div>
-                    <label for="potassiumChloride" class="block text-sm font-medium text-slate-300 mb-2">Chlorure de potassium <span
-                            class="text-xs text-amber-500 font-mono ml-2">KCl</span></label>
-                    <div class="relative group">
-                        <input type="number" id="potassiumChloride"
-                            class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
-                            value="0" min="0" step="0.1">
-                        <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Résultats -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <!-- Eau de base -->
-                <div class="p-6 bg-slate-800/40 rounded-2xl border border-slate-700/50">
-                    <h3 class="text-lg font-bold text-slate-300 mb-4 flex items-center gap-2">
-                        <i class="fas fa-tint text-sky-500"></i> Eau de base
-                    </h3>
-                    <div id="baseWaterParams" class="space-y-3"></div>
-                </div>
-                <!-- Eau après ajouts -->
-                <div class="p-6 bg-slate-800/40 rounded-2xl border border-slate-700/50 relative overflow-hidden">
-                    <div class="absolute top-0 right-0 p-4 opacity-10">
-                        <i class="fas fa-flask text-6xl"></i>
-                    </div>
-                    <h3 class="text-lg font-bold text-slate-300 mb-4 flex items-center gap-2">
-                        <i class="fas fa-magic text-amber-500"></i> Eau modifiée
-                    </h3>
-                    <div id="modifiedWaterParams" class="space-y-3"></div>
-                </div>
-            </div>
-
-            <!-- Indicateurs et comparaison au profil cible pour l'eau modifiée -->
-            <div id="profileComparison" class="mt-8 p-4 md:p-6 bg-slate-800/40 rounded-2xl border border-slate-700/50">
-                <h3 class="text-lg font-bold text-slate-300 mb-4 flex items-center gap-2">
-                    <i class="fas fa-bullseye text-amber-500"></i> Eau modifiée : indicateurs
-                </h3>
-                <div id="modifiedIndicators" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"></div>
-                <div id="profileTable"></div>
-            </div>
-
-            <!-- Export et impression -->
-            <div class="mt-8 flex flex-col md:flex-row gap-4 md:justify-end">
-                <button type="button" id="exportBeerXml"
-                    class="px-6 py-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 font-medium hover:bg-sky-500/20 transition-all">
-                    <i class="fas fa-file-export mr-2"></i>Exporter (BeerXML)
-                </button>
-                <button type="button" id="printSheet"
-                    class="px-6 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium hover:bg-amber-500/20 transition-all">
-                    <i class="fas fa-print mr-2"></i>Imprimer la fiche de brassage
-                </button>
-            </div>
-            <p class="mt-3 text-xs text-slate-400 md:text-right">Format BeerXML : BeerSmith, Brewer's Friend et autres logiciels compatibles.</p>
-                </div>
+                <!-- Résumé collant en bas d'écran (mobile, onglet calculateur) -->
+                <div id="calcSummaryBar" class="calc-summary" aria-hidden="true"></div>
             </section>
 
             <!-- Onglet : historique -->

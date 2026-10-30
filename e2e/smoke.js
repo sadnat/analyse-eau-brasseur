@@ -121,21 +121,41 @@ const step = async (name, fn) => {
             assert.equal(await page.isVisible('#historyComputedLegend'), false);
         });
 
-                await step('solveur : profil NEIPA → ajouts suggérés et tableau de comparaison', async () => {
+                await step('solveur : profil NEIPA → ajouts suggérés et barres de comparaison', async () => {
             await page.click('#tab-calculateur');
             await page.selectOption('#targetProfile', 'neipa');
             await page.click('#suggestAdditions');
             assert.ok(parseFloat(await page.inputValue('#calciumChloride')) > 0);
-            assert.match(await page.innerText('#profileTable'), /CHLORURES/);
+            assert.match(await page.innerText('#ionBars'), /Chlorures/);
+            assert.match(await page.getAttribute('#ionBars [data-ion="CHLORURES"] [role="img"]', 'aria-label'), /cible 150 mg\/L/);
+            assert.match(await page.innerText('#solverNote'), /Bicarbonates/);
+            assert.ok(await page.isVisible('#legendDeviation'));
+            assert.equal(await page.isVisible('#legendNeutral'), false);
         });
 
         await step('eau de base : le maximum 12 mois change le calcium de base', async () => {
-            const calcium = () => page.$eval('#baseWaterParams', el => el.innerText.match(/CALCIUM \(CA\):\s*([\d,]+)/)[1]);
+            const calcium = () => page.innerText('#ionBars [data-ion="CALCIUM (CA)"] .ion-base');
             const last = await calcium();
             await page.selectOption('#baseWaterMode', 'maximum');
             assert.notEqual(await calcium(), last);
             await page.selectOption('#baseWaterMode', 'derniere');
             assert.equal(await calcium(), last);
+        });
+
+        await step('sels : boutons −/+ et remise à zéro', async () => {
+            const modifiedCalcium = () => page.innerText('#ionBars [data-ion="CALCIUM (CA)"] .ion-modified');
+            await page.click('#resetAdditions');
+            const before = await modifiedCalcium();
+            assert.equal(await page.innerText('#ionBars [data-ion="CALCIUM (CA)"] .ion-base'), before);
+            await page.click('button[aria-label^="Augmenter Sulfate de calcium"]');
+            await page.click('button[aria-label^="Augmenter Sulfate de calcium"]');
+            assert.equal(await page.inputValue('#calciumSulfate'), '0.2');
+            assert.notEqual(await modifiedCalcium(), before);
+            await page.click('button[aria-label^="Diminuer Sulfate de calcium"]');
+            assert.equal(await page.inputValue('#calciumSulfate'), '0.1');
+            await page.click('#resetAdditions');
+            assert.equal(await modifiedCalcium(), before);
+            await page.click('#suggestAdditions'); // ajouts NEIPA pour l'export et la fiche
         });
 
         await step('export BeerXML : fichier avec eau de base et eau modifiée', async () => {
@@ -189,7 +209,10 @@ const step = async (name, fn) => {
                 await mobile.click(`#tab-${tab}`);
                 if (tab === 'calculateur') await mobile.selectOption('#targetProfile', 'houblonne');
                 assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0, tab);
+                // Résumé collant visible uniquement dans le calculateur
+                assert.equal(await mobile.isVisible('#calcSummaryBar'), tab === 'calculateur', `résumé ${tab}`);
             }
+            assert.equal(await page.isVisible('#calcSummaryBar'), false, 'pas de résumé collant sur desktop');
         });
 
         await step("Hub'Eau muet : SISE-Eaux affiché seul après le délai maximal", async () => {

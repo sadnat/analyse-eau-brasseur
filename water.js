@@ -483,6 +483,15 @@ const filterByPeriod = (analyses, period) => {
         .sort((a, b) => a.date - b.date);
 };
 
+// Écart à la cible d'un profil : « ok » à 15 % près (10 mg/L au moins), « proche » jusqu'au triple, sinon « loin »
+const profileDeviation = (value, target) => {
+    const tolerance = Math.max(target * 0.15, 10);
+    const delta = Math.abs(value - target);
+    if (delta <= tolerance) return 'ok';
+    if (delta <= tolerance * 3) return 'proche';
+    return 'loin';
+};
+
 // Modes d'eau de base du calculateur
 const BASE_WATER_MODES = {
     derniere: 'Dernière mesure',
@@ -583,6 +592,7 @@ if (typeof module !== 'undefined') {
         gaugePosition,
         HELP_TEXTS,
         HISTORY_PERIODS,
-        filterByPeriod
+        filterByPeriod,
+        profileDeviation
     };
 }

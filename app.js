@@ -417,57 +417,183 @@ const renderBrewingIndicators = (container, water) => {
     ));
 };
 
+// Indicateurs compacts du panneau de résultat du calculateur (grille 2 × 2)
+const renderCompactIndicators = (container, water) => {
+    container.innerHTML = '';
+    const ra = calculateResidualAlkalinity(water);
+    const ratio = calculateSulfateChlorideRatio(water);
+    const balance = calculateIonBalance(water);
+    const th = calculateTotalHardness(water);
+    [
+        ['Dureté', `${formatValue(Math.round(th * 10) / 10)} °f`, describeHardness(th)],
+        ['Alcalinité résiduelle', `${formatValue(Math.round(ra))} mg/L CaCO₃`, describeResidualAlkalinity(ra)],
+        ['Ratio SO₄ / Cl', ratio === null ? '—' : formatValue(Math.round(ratio * 100) / 100), describeSulfateChlorideRatio(ratio, water)],
+        ['Balance ionique', balance ? `${formatValue(Math.round(balance.error * 10) / 10)} %` : '—', describeIonBalance(balance)]
+    ].forEach(([label, value, interpretation]) => {
+        const cell = document.createElement('div');
+        cell.className = 'p-2 rounded-lg bg-slate-800/50';
+        appendText(cell, 'p', label, 'text-xs text-slate-400');
+        appendText(cell, 'p', value, 'text-sm font-semibold text-white');
+        const hint = document.createElement('p');
+        hint.className = `text-xs leading-snug flex items-start gap-1 ${interpretation.color}`;
+        const icon = document.createElement('i');
+        icon.className = `fas ${interpretation.icon || 'fa-circle-info'} mt-0.5`;
+        icon.setAttribute('aria-hidden', 'true');
+        hint.append(icon, interpretation.text);
+        cell.appendChild(hint);
+        container.appendChild(cell);
+    });
+};
+
 // Eaux de base du réseau (dernière, moyenne, maximum) et eau retenue dans le calculateur
 let calculatorBaseWaters = null;
 let calculatorBaseWater = null;
 let calculatorInitialized = false;
 
-// IDs des inputs de minéraux du calculateur
-const MINERAL_INPUT_IDS = [
-    'calciumSulfate',
-    'magnesiumSulfate',
-    'calciumChloride',
-    'sodiumChloride',
-    'calciumCarbonate',
-    'sodiumBicarbonate',
-    'potassiumChloride'
+// Sels du calculateur (les identifiants sont les clés de MINERAL_CONVERSIONS)
+const SALTS = [
+    { id: 'calciumSulfate', name: 'Sulfate de calcium (gypse)', formula: 'CaSO₄·2H₂O' },
+    { id: 'magnesiumSulfate', name: 'Sulfate de magnésium (sel d\'Epsom)', formula: 'MgSO₄·7H₂O' },
+    { id: 'calciumChloride', name: 'Chlorure de calcium', formula: 'CaCl₂·2H₂O' },
+    { id: 'sodiumChloride', name: 'Chlorure de sodium', formula: 'NaCl' },
+    { id: 'calciumCarbonate', name: 'Carbonate de calcium (craie)', formula: 'CaCO₃' },
+    { id: 'sodiumBicarbonate', name: 'Bicarbonate de sodium', formula: 'NaHCO₃' },
+    { id: 'potassiumChloride', name: 'Chlorure de potassium', formula: 'KCl' }
 ];
+const MINERAL_INPUT_IDS = SALTS.map(salt => salt.id);
+const SALT_STEP = 0.1;
 
-// Créer l'affichage d'une valeur avec indicateur de plage (sécurisé contre XSS)
-const createParameterDisplay = (value, unit, target) => {
-    const isInRange = value >= target.min && value <= target.max;
-    const span = document.createElement('span');
-    span.className = isInRange ? 'text-green-600' : 'text-red-600';
-    span.textContent = `${formatValue(Math.round(value * 10) / 10)} ${unit}`;
-    return span;
+// Champs de sels avec boutons −/+ (générés une seule fois)
+const renderSaltInputs = () => {
+    const container = document.getElementById('saltInputs');
+    SALTS.forEach(salt => {
+        const field = document.createElement('div');
+        const label = document.createElement('label');
+        label.htmlFor = salt.id;
+        label.className = 'block text-sm font-medium text-slate-200 mb-2';
+        label.textContent = `${salt.name} `;
+        const formula = document.createElement('span');
+        formula.className = 'text-xs text-amber-400 font-mono';
+        formula.textContent = salt.formula;
+        label.appendChild(formula);
+
+        const row = document.createElement('div');
+        row.className = 'flex items-stretch rounded-xl border border-slate-600 bg-slate-900/60 focus-within:ring-2 focus-within:ring-sky-500/60';
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.id = salt.id;
+        input.value = '0';
+        input.min = '0';
+        input.step = String(SALT_STEP);
+        input.inputMode = 'decimal';
+        input.className = 'min-w-0 flex-1 bg-transparent px-3 py-2.5 text-white font-mono text-center focus:outline-none';
+        const stepButton = (delta, symbol, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'w-11 shrink-0 text-lg text-slate-300 hover:text-white hover:bg-slate-700/60 focus:outline-none focus-visible:bg-slate-700';
+            button.textContent = symbol;
+            button.setAttribute('aria-label', `${action} ${salt.name} de ${formatValue(SALT_STEP)} g`);
+            button.addEventListener('click', () => {
+                const next = Math.max(0, Math.round(((parseFloat(input.value) || 0) + delta) * 10) / 10);
+                input.value = String(next);
+                updateCalculations();
+            });
+            return button;
+        };
+        const unit = document.createElement('span');
+        unit.className = 'self-center pr-1 text-slate-400 text-sm';
+        unit.setAttribute('aria-hidden', 'true');
+        unit.textContent = 'g';
+        row.append(stepButton(-SALT_STEP, '−', 'Diminuer'), input, unit, stepButton(SALT_STEP, '+', 'Augmenter'));
+        input.addEventListener('input', updateCalculations);
+
+        field.append(label, row);
+        container.appendChild(field);
+    });
 };
 
-// Afficher les paramètres d'une eau dans un conteneur (sécurisé contre XSS - pas de innerHTML)
-const displayCalculatorParameters = (container, water) => {
-    if (!container) return;
+// Couleur de la barre « après ajouts » selon l'écart à la cible (neutre sans profil)
+const DEVIATION_BAR_COLORS = { ok: 'bg-emerald-400', proche: 'bg-amber-400', loin: 'bg-red-400' };
+const DEVIATION_TEXT = { ok: 'conforme à la cible', proche: 'proche de la cible', loin: 'loin de la cible' };
+
+// Barres par ion : eau de base, après ajouts et repère de cible
+const renderIonBars = (state) => {
+    const container = document.getElementById('ionBars');
     container.innerHTML = '';
-    Object.entries(PARAMETERS_OF_INTEREST)
-        .filter(([name]) => name !== 'TAC' && name !== 'PH')
-        .forEach(([name, info]) => {
-            const value = water[name] || 0;
-            const row = document.createElement('div');
-            row.className = 'flex justify-between items-center p-3 rounded-lg bg-slate-700/30 border border-slate-600/30';
-            const label = document.createElement('span');
-            label.className = 'font-medium text-slate-300';
-            label.textContent = `${name}:`;
-            row.appendChild(label);
-            row.appendChild(createParameterDisplay(value, info.unit, info.target));
-            container.appendChild(row);
-        });
+    const fmt = (v) => formatValue(Math.round((v || 0) * 10) / 10);
+    PROFILE_IONS.forEach(ion => {
+        const base = state.baseWater[ion] || 0;
+        const modified = state.modifiedWater[ion] || 0;
+        const target = state.profile ? state.profile.ions[ion] : null;
+        const scale = { min: 0, max: Math.max(base, modified, target || 0, 1) * 1.1 };
+        const deviation = target === null ? null : profileDeviation(modified, target);
+
+        const row = document.createElement('div');
+        row.dataset.ion = ion;
+        const header = document.createElement('div');
+        header.className = 'flex items-baseline justify-between gap-2 text-sm';
+        const name = document.createElement('span');
+        name.className = 'text-slate-200';
+        name.textContent = PARAMETERS_OF_INTEREST[ion].label;
+        const values = document.createElement('span');
+        values.className = 'font-mono text-xs text-slate-300';
+        const baseSpan = document.createElement('span');
+        baseSpan.className = 'ion-base';
+        baseSpan.textContent = fmt(base);
+        const modifiedSpan = document.createElement('span');
+        modifiedSpan.className = 'ion-modified text-white font-semibold';
+        modifiedSpan.textContent = fmt(modified);
+        values.append(baseSpan, ' → ', modifiedSpan);
+        if (target !== null) values.append(` / ${formatValue(target)}`);
+        values.append(' mg/L');
+        header.append(name, values);
+
+        const bar = document.createElement('div');
+        bar.className = 'relative mt-1 h-3 rounded-full bg-slate-800';
+        bar.setAttribute('role', 'img');
+        bar.setAttribute('aria-label', `${PARAMETERS_OF_INTEREST[ion].label} : ${fmt(base)} puis ${fmt(modified)} mg/L`
+            + (target !== null ? `, cible ${formatValue(target)} mg/L, ${DEVIATION_TEXT[deviation]}` : ''));
+        const fill = (value, className) => {
+            const el = document.createElement('div');
+            el.className = `absolute left-0 rounded-full ${className}`;
+            el.style.width = `${gaugePosition(value, scale)}%`;
+            bar.appendChild(el);
+        };
+        fill(modified, `top-0 h-3 opacity-80 ${deviation ? DEVIATION_BAR_COLORS[deviation] : 'bg-sky-400'}`);
+        fill(base, 'top-1 h-1 bg-slate-500');
+        if (target !== null) {
+            const marker = document.createElement('div');
+            marker.className = 'absolute -top-1 h-5 w-0.5 bg-white';
+            marker.style.left = `${gaugePosition(target, scale)}%`;
+            bar.appendChild(marker);
+        }
+        row.append(header, bar);
+        container.appendChild(row);
+    });
+};
+
+// Résumé collant (mobile) : principaux ions et ratio de l'eau modifiée
+const renderSummaryBar = (water) => {
+    const bar = document.getElementById('calcSummaryBar');
+    const ratio = calculateSulfateChlorideRatio(water);
+    const fmt = (v) => formatValue(Math.round(v || 0));
+    bar.textContent = `Ca ${fmt(water['CALCIUM (CA)'])} · SO₄ ${fmt(water['SULFATES (SO4)'])} · Cl ${fmt(water['CHLORURES'])} mg/L`
+        + (ratio === null ? '' : ` · SO₄/Cl ${formatValue(Math.round(ratio * 100) / 100)}`);
 };
 
 // Recalculer et afficher l'eau modifiée à partir des saisies
 const updateCalculations = () => {
     if (!calculatorBaseWater) return;
-    const { modifiedWater } = readCalculatorState();
-    displayCalculatorParameters(document.getElementById('modifiedWaterParams'), modifiedWater);
-    renderBrewingIndicators(document.getElementById('modifiedIndicators'), modifiedWater);
-    renderProfileComparison(modifiedWater);
+    const state = readCalculatorState();
+    renderIonBars(state);
+    // Légende : couleurs d'écart seulement quand un profil cible est choisi
+    document.getElementById('legendNeutral').classList.toggle('hidden', Boolean(state.profile));
+    document.getElementById('legendDeviation').classList.toggle('hidden', !state.profile);
+    renderCompactIndicators(document.getElementById('modifiedIndicators'), state.modifiedWater);
+    renderSummaryBar(state.modifiedWater);
+    const note = document.getElementById('solverNote');
+    note.textContent = solverNote;
+    note.classList.toggle('hidden', !solverNote);
 };
 
 // Profil cible sélectionné (ou null)
@@ -478,72 +604,6 @@ const getSelectedProfile = () => {
 
 // Message du solveur (ions impossibles à atteindre par ajout)
 let solverNote = '';
-
-// Tableau de comparaison eau modifiée / profil cible (sécurisé contre XSS)
-const renderProfileComparison = (water) => {
-    const container = document.getElementById('profileTable');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const profile = getSelectedProfile();
-    if (!profile) {
-        const hint = document.createElement('p');
-        hint.className = 'text-sm text-slate-400';
-        hint.textContent = 'Choisissez un profil cible pour comparer votre eau et obtenir une suggestion d\'ajouts.';
-        container.appendChild(hint);
-        return;
-    }
-
-    // Défilement horizontal sur petit écran plutôt qu'une colonne tronquée
-    const scroller = document.createElement('div');
-    scroller.className = 'overflow-x-auto';
-    const table = document.createElement('table');
-    table.className = 'w-full text-xs md:text-sm';
-    const head = document.createElement('tr');
-    head.className = 'text-left text-xs text-slate-400 uppercase tracking-wide';
-    ['Paramètre (mg/L)', 'Modifiée', 'Cible', 'Écart'].forEach(text => {
-        const th = document.createElement('th');
-        th.className = 'pb-3 pr-3 font-semibold';
-        th.textContent = text;
-        head.appendChild(th);
-    });
-    table.appendChild(head);
-
-    PROFILE_IONS.forEach(ion => {
-        const value = water[ion] || 0;
-        const target = profile.ions[ion];
-        const delta = value - target;
-        // Tolérance : 15 % de la cible, au moins 10 mg/L
-        const tolerance = Math.max(target * 0.15, 10);
-        const deltaColor = Math.abs(delta) <= tolerance ? 'text-emerald-400'
-            : Math.abs(delta) <= tolerance * 3 ? 'text-amber-400' : 'text-red-400';
-
-        const row = document.createElement('tr');
-        row.className = 'border-t border-slate-700/50';
-        [
-            { text: ion, className: 'py-2 text-slate-300' },
-            { text: formatValue(Math.round(value * 10) / 10), className: 'py-2 text-white font-mono' },
-            { text: formatValue(target), className: 'py-2 text-slate-400 font-mono' },
-            { text: `${delta > 0 ? '+' : ''}${formatValue(Math.round(delta * 10) / 10)}`, className: `py-2 font-mono ${deltaColor}` }
-        ].forEach(cell => {
-            const td = document.createElement('td');
-            // Valeurs numériques sur une ligne ; le nom du paramètre peut passer à la ligne
-            td.className = `${cell.className} pr-3${cell.className.includes('font-mono') ? ' whitespace-nowrap' : ''}`;
-            td.textContent = cell.text;
-            row.appendChild(td);
-        });
-        table.appendChild(row);
-    });
-    scroller.appendChild(table);
-    container.appendChild(scroller);
-
-    if (solverNote) {
-        const note = document.createElement('p');
-        note.className = 'mt-4 text-xs text-amber-400';
-        note.textContent = solverNote;
-        container.appendChild(note);
-    }
-};
 
 // Remplir les champs avec les ajouts suggérés pour le profil sélectionné
 const applySuggestedAdditions = () => {
@@ -560,7 +620,7 @@ const applySuggestedAdditions = () => {
     const result = calculateMineralAdditions(calculatorBaseWater, grams, liters);
     const tooHigh = PROFILE_IONS.filter(ion => result[ion] > Math.max(profile.ions[ion] * 1.15, profile.ions[ion] + 10));
     solverNote = tooHigh.length > 0
-        ? `Au-dessus de la cible : ${tooHigh.join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée.`
+        ? `Au-dessus de la cible : ${tooHigh.map(ion => PARAMETERS_OF_INTEREST[ion].label).join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée.`
         : '';
 
     updateCalculations();
@@ -684,7 +744,7 @@ const buildBrewSheet = () => {
     appendTable(sheet,
         ['Paramètre', 'Eau de base', 'Eau modifiée', ...(state.profile ? [`Cible ${state.profile.name}`] : [])],
         PROFILE_IONS.map(ion => [
-            ion,
+            PARAMETERS_OF_INTEREST[ion].label,
             round(state.baseWater[ion]),
             round(state.modifiedWater[ion]),
             ...(state.profile ? [formatValue(state.profile.ions[ion])] : [])
@@ -721,13 +781,13 @@ const printBrewSheet = () => {
 // Rafraîchir l'affichage complet du calculateur (eau de base + eau modifiée)
 const renderCalculator = () => {
     if (!calculatorBaseWater) return;
-    displayCalculatorParameters(document.getElementById('baseWaterParams'), calculatorBaseWater);
     updateCalculations();
 };
 
 // Attacher les écouteurs du calculateur une seule fois
 function initializeCalculator() {
     if (calculatorInitialized) return;
+    renderSaltInputs();
 
     // Profils cibles
     const profileSelect = document.getElementById('targetProfile');
@@ -744,7 +804,9 @@ function initializeCalculator() {
             const profile = getSelectedProfile();
             if (suggestButton) suggestButton.disabled = !profile;
             if (profileDescription) {
-                profileDescription.textContent = profile ? `${profile.description} — valeurs indicatives.` : '';
+                profileDescription.textContent = profile
+                    ? `${profile.description} — valeurs indicatives.`
+                    : 'Choisissez un profil pour comparer votre eau et obtenir une suggestion de sels.';
             }
             solverNote = '';
             updateCalculations();
@@ -771,11 +833,11 @@ function initializeCalculator() {
     const printButton = document.getElementById('printSheet');
     if (printButton) printButton.addEventListener('click', printBrewSheet);
 
-    ['waterQuantity', ...MINERAL_INPUT_IDS].forEach(id => {
-        const input = document.getElementById(id);
-        if (input) {
-            input.addEventListener('input', updateCalculations);
-        }
+    document.getElementById('waterQuantity').addEventListener('input', updateCalculations);
+    document.getElementById('resetAdditions').addEventListener('click', () => {
+        MINERAL_INPUT_IDS.forEach(id => { document.getElementById(id).value = '0'; });
+        solverNote = '';
+        updateCalculations();
     });
 
     calculatorInitialized = true;
