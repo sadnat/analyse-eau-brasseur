@@ -221,22 +221,34 @@
                                 </button>
                             </div>
                             <p id="profileDescription" class="mt-2 text-xs text-slate-400">Choisissez un profil pour comparer votre eau et obtenir une suggestion de sels.</p>
-                            <label class="mt-3 inline-flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
-                                <input type="checkbox" id="solverUseAms" checked class="mt-0.5 h-4 w-4 rounded border-slate-500 bg-slate-800 accent-amber-500">
-                                <span>Autoriser l'AMS dans la suggestion <span class="text-slate-400">(permet de baisser les bicarbonates)</span></span>
-                            </label>
+                            <div class="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                                <label for="solverAcid" class="text-sm text-slate-300">Acide de la suggestion <span class="text-slate-400">(seul moyen de baisser les bicarbonates)</span></label>
+                                <div class="relative sm:ml-auto">
+                                    <select id="solverAcid"
+                                        class="w-full sm:w-auto bg-slate-900/60 border border-slate-600 rounded-lg pl-3 pr-9 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500/60 appearance-none cursor-pointer">
+                                        <option value="ams" selected>AMS</option>
+                                        <option value="phosphoric75">Acide phosphorique 75 %</option>
+                                        <option value="lactic80">Acide lactique 80 %</option>
+                                        <option value="">Aucun acide</option>
+                                    </select>
+                                    <i class="fas fa-chevron-down text-xs absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" aria-hidden="true"></i>
+                                </div>
+                            </div>
                         </section>
 
                         <!-- Étape 3 : sels -->
                         <section class="glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcStep3">
                             <div class="flex items-center justify-between gap-3 mb-4">
-                                <h3 id="calcStep3" class="text-lg font-semibold text-slate-200 flex items-center"><span class="step-number">3</span>Sels et acide</h3>
+                                <h3 id="calcStep3" class="text-lg font-semibold text-slate-200 flex items-center"><span class="step-number">3</span>Sels et acides</h3>
                                 <button type="button" id="resetAdditions" class="text-sm text-slate-300 hover:text-white underline-offset-4 hover:underline focus:outline-none focus:ring-2 focus:ring-sky-500/60 rounded">
                                     <i class="fas fa-rotate-left mr-1" aria-hidden="true"></i>Remettre à zéro
                                 </button>
                             </div>
                             <!-- Champs générés par app.js (SALTS) -->
                             <div id="saltInputs" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+                            <h4 class="mt-6 mb-3 text-sm font-semibold text-slate-300">Acides (en mL)</h4>
+                            <div id="acidInputs" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+                            <div id="acidHint" class="mt-3 space-y-1 text-xs" aria-live="polite"></div>
                         </section>
                     </div>
 

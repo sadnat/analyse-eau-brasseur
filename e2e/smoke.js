@@ -130,17 +130,28 @@ const step = async (name, fn) => {
             assert.match(await page.getAttribute('#ionBars [data-ion="CHLORURES"] [role="img"]', 'aria-label'), /cible 150 mg\/L/);
             assert.ok(await page.isVisible('#legendDeviation'));
             assert.equal(await page.isVisible('#legendNeutral'), false);
-            // Avec l'AMS (par défaut) : bicarbonates ramenés vers la cible, pas d'avertissement
+            // Avec l'AMS (acide par défaut) : bicarbonates ramenés vers la cible, pas d'avertissement
             assert.ok(parseFloat(await page.inputValue('#ams')) > 0, 'AMS suggéré');
             assert.equal(await page.isVisible('#solverNote'), false);
-            assert.match(await page.innerText('#amsHint'), /Neutralise \d+ mg\/L CaCO₃/);
+            assert.match(await page.innerText('#acidHint'), /neutralisent \d+ mg\/L CaCO₃/);
             assert.match(await page.getAttribute('#ionBars [data-ion="HCO3"] [role="img"]', 'aria-label'), /conforme à la cible/);
-            // Sans l'AMS : les bicarbonates restent trop hauts et l'AMS est proposé
-            await page.uncheck('#solverUseAms');
+            // Acide lactique : suggestion en lactique, AMS remis à zéro
+            await page.selectOption('#solverAcid', 'lactic80');
             await page.click('#suggestAdditions');
             assert.equal(await page.inputValue('#ams'), '0');
-            assert.match(await page.innerText('#solverNote'), /Bicarbonates.*autorisez l'AMS/);
-            await page.check('#solverUseAms');
+            assert.ok(parseFloat(await page.inputValue('#lactic80')) > 0, 'lactique suggéré');
+            assert.equal(await page.isVisible('#solverNote'), false);
+            // Sans acide : les bicarbonates restent trop hauts et un acide est proposé
+            await page.selectOption('#solverAcid', '');
+            await page.click('#suggestAdditions');
+            assert.equal(await page.inputValue('#lactic80'), '0');
+            assert.match(await page.innerText('#solverNote'), /Bicarbonates.*choisissez un acide/);
+            // Excès de lactique : alerte de goût
+            await page.fill('#lactic80', '20');
+            await page.dispatchEvent('#lactic80', 'input');
+            assert.match(await page.innerText('#acidHint'), /excès d'acide/);
+            assert.match(await page.innerText('#acidHint'), /goût acidulé/);
+            await page.selectOption('#solverAcid', 'ams');
             await page.click('#suggestAdditions');
         });
 

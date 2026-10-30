@@ -86,7 +86,11 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 
 Onglet « Calculateur » : 3 étapes (eau de base et volume, profil cible, sels) + panneau de résultat `#calcPanel` collant sur grand écran.
 - Champs générés depuis `SALTS` (app.js, source unique des libellés et unités) avec boutons −/+ ; `MINERAL_INPUT_IDS` et `SALT_UNITS` en dérivent
-- **AMS** (Murphy & Son, acide HCl + H2SO4, en mL) : `AMS_PER_ML` (water.js) dérivé de l'analyse fabricant (densité 1,085, acidité 18,5 % exprimée en H2SO4, Cl 6,5 %, SO4 9,0 %) → par mL : 4,09 meq d'acide, 70,5 mg Cl, 97,7 mg SO4. `calculateMineralAdditions()` neutralise les bicarbonates (bornés à 0, TAC ajusté) ; `amsEffect()` donne l'alcalinité neutralisée et l'excès d'acide (`#amsHint`). Option `useAms` du solveur (case `#solverUseAms`), arrondi à 0,5 mL
+- **Acides** (en mL), table `ACIDS` (water.js) : `meqPerMl` = acide disponible au pH de maische de référence 5,4 (`MASH_PH_REFERENCE`), `ions` = apports en mg/mL
+  - AMS (Murphy & Son, HCl + H2SO4) : densité 1,085, acidité 18,5 % exprimée en H2SO4 → 4,09 meq/mL ; 70,5 mg Cl et 97,7 mg SO4 par mL
+  - Phosphorique 75 % (densité 1,579) → 12,27 meq/mL ; lactique 80 % (densité 1,20) → 10,36 meq/mL et 949 mg de lactate/mL (alerte au-delà de `LACTATE_TASTE_THRESHOLD`, 400 mg/L)
+  - `calculateMineralAdditions()` neutralise les bicarbonates (bornés à 0, TAC ajusté) ; `acidEffect()` → alcalinité neutralisée et excès d'acide (`#acidHint`)
+  - Solveur : option `acid` (sélecteur `#solverAcid`, AMS par défaut) ; acide seulement si la cible demande de baisser les bicarbonates, bicarbonate seulement pour les monter, jamais les deux
 - `renderIonBars()` : barre de l'eau de base, barre après ajouts colorée selon `profileDeviation()` (water.js), repère de cible ; `renderCompactIndicators()` pour le panneau
 - Garder le panneau plus court que la colonne des étapes, sinon il ne peut plus rester collé
 - Mobile : résumé fixe `#calcSummaryBar` en bas d'écran, visible seulement quand l'onglet calculateur l'est (il est dans le panneau d'onglet)

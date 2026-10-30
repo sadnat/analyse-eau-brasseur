@@ -324,26 +324,42 @@ test('écart à la cible : tolérance de 15 % (10 mg/L au moins)', () => {
     assert.equal(w.profileDeviation(155, 150), 'ok');
 });
 
-// --- AMS ---
+// --- Acides (AMS, phosphorique 75 %, lactique 80 %) ---
 
 test('AMS : analyse cohérente, 1 mL/L ≈ 205 mg/L CaCO3 neutralisés, +70,5 Cl, +97,7 SO4', () => {
+    const ams = w.ACIDS.ams;
     // Acide porté par les anions mesurés ≈ acidité déclarée (exprimée en H2SO4)
-    approx(w.AMS_PER_ML.chloride / 35.453 + 2 * w.AMS_PER_ML.sulfate / 96.06, w.AMS_PER_ML.acidMeq, 0.1);
+    approx(ams.ions['CHLORURES'] / 35.453 + 2 * ams.ions['SULFATES (SO4)'] / 96.06, ams.meqPerMl, 0.1);
     const result = w.calculateMineralAdditions({ 'HCO3': 300, 'TAC': 24.6, 'CHLORURES': 10 }, { ams: 1 }, 1);
     approx(result['CHLORURES'], 80.5, 0.1);
     approx(result['SULFATES (SO4)'], 97.65, 0.1);
     approx(result['HCO3'], 300 - 249.8, 0.5);
     approx(result['TAC'], 24.6 - 20.5, 0.1);
-    approx(w.amsEffect(1, 1, 300).neutralized, 204.8, 0.5);
+    approx(w.acidEffect({ ams: 1 }, 1, 300).neutralized, 204.8, 0.5);
 });
 
-test('AMS : alcalinité épuisée → bicarbonates à zéro et excès d\'acide signalé', () => {
-    const result = w.calculateMineralAdditions({ 'HCO3': 61.02, 'TAC': 5 }, { ams: 10 }, 20);
+test('acides phosphorique 75 % et lactique 80 % : pouvoir neutralisant, sans apport d\'ions suivis', () => {
+    approx(w.ACIDS.phosphoric75.meqPerMl, 12.27, 0.05);
+    approx(w.ACIDS.lactic80.meqPerMl, 10.36, 0.05);
+    approx(w.ACIDS.lactic80.lactatePerMl, 949, 1);
+    const base = { 'HCO3': 200, 'CHLORURES': 10, 'SULFATES (SO4)': 10 };
+    const phosphoric = w.calculateMineralAdditions(base, { phosphoric75: 1 }, 20);
+    approx(phosphoric['HCO3'], 200 - 12.27 / 20 * 61.02, 0.5);
+    assert.equal(phosphoric['CHLORURES'], 10);
+    assert.equal(phosphoric['SULFATES (SO4)'], 10);
+    const lactic = w.calculateMineralAdditions(base, { lactic80: 1 }, 20);
+    approx(lactic['HCO3'], 200 - 10.36 / 20 * 61.02, 0.5);
+});
+
+test('acides : effets cumulés, alcalinité épuisée → bicarbonates à zéro et excès signalé', () => {
+    const additions = { ams: 5, phosphoric75: 1, lactic80: 1 };
+    const acid = 5 * w.ACIDS.ams.meqPerMl + w.ACIDS.phosphoric75.meqPerMl + w.ACIDS.lactic80.meqPerMl;
+    const result = w.calculateMineralAdditions({ 'HCO3': 61.02, 'TAC': 5 }, additions, 20);
     assert.equal(result['HCO3'], 0);
     assert.equal(result['TAC'], 0);
-    const effect = w.amsEffect(10, 20, 61.02);
+    const effect = w.acidEffect(additions, 20, 61.02);
     approx(effect.neutralized, 50.04, 0.01);
-    approx(effect.excess, 10 * w.AMS_PER_ML.acidMeq / 20 * 50.04 - 50.04, 0.01);
+    approx(effect.excess, (acid / 20 - 1) * 50.04, 0.01);
 });
 
 test('AMS : neutralise aussi le bicarbonate ajouté (ordre des ajouts indifférent)', () => {
@@ -351,13 +367,34 @@ test('AMS : neutralise aussi le bicarbonate ajouté (ordre des ajouts indiffére
     approx(result['HCO3'], 72.64 - 4.09 * 61.02 / 10, 0.5);
 });
 
-test('solveur avec AMS : atteint une cible de bicarbonates plus basse que l\'eau de base', () => {
-    const target = w.WATER_PROFILES.neipa.ions; // HCO3 30 < 40,87 dans l'eau de Foix
-    const without = w.solveMineralAdditions(SOFT_WATER, target, 20);
-    assert.equal(without.ams, undefined);
-    const amounts = w.solveMineralAdditions(SOFT_WATER, target, 20, { useAms: true });
-    assert.ok(amounts.ams > 0);
-    assert.equal(amounts.ams * 2, Math.round(amounts.ams * 2), 'arrondi à 0,5 mL');
-    const result = w.calculateMineralAdditions(SOFT_WATER, amounts, 20);
-    w.PROFILE_IONS.forEach(ion => approx(result[ion], target[ion], Math.max(target[ion] * 0.15, 10), ion));
+for (const acid of ['ams', 'phosphoric75', 'lactic80']) {
+    test(`solveur avec ${acid} : atteint une cible de bicarbonates plus basse que l'eau de base`, () => {
+        const target = w.WATER_PROFILES.neipa.ions; // HCO3 30 < 40,87 dans l'eau de Foix
+        const without = w.solveMineralAdditions(SOFT_WATER, target, 20);
+        assert.equal(without[acid], undefined);
+        const amounts = w.solveMineralAdditions(SOFT_WATER, target, 20, { acid });
+        assert.ok(amounts[acid] > 0);
+        const result = w.calculateMineralAdditions(SOFT_WATER, amounts, 20);
+        w.PROFILE_IONS.forEach(ion => approx(result[ion], target[ion], Math.max(target[ion] * 0.15, 10), ion));
+    });
+}
+
+test('solveur : AMS arrondi à 0,5 mL, acides concentrés à 0,1 mL', () => {
+    const ams = w.solveMineralAdditions(SOFT_WATER, w.WATER_PROFILES.neipa.ions, 20, { acid: 'ams' }).ams;
+    assert.equal(ams * 2, Math.round(ams * 2));
+    const lactic = w.solveMineralAdditions(SOFT_WATER, w.WATER_PROFILES.pilsen.ions, 20, { acid: 'lactic80' }).lactic80;
+    approx(lactic * 10, Math.round(lactic * 10), 1e-9);
+});
+
+test('solveur : jamais d\'acide et de bicarbonate ensemble', () => {
+    for (const acid of ['ams', 'phosphoric75', 'lactic80']) {
+        // Bicarbonates à baisser : acide, pas de bicarbonate
+        const down = w.solveMineralAdditions(SOFT_WATER, w.WATER_PROFILES.neipa.ions, 20, { acid });
+        assert.ok(down[acid] > 0, acid);
+        assert.ok(!(down.sodiumBicarbonate > 0), `${acid} : pas de bicarbonate`);
+        // Bicarbonates à monter (Dublin) : bicarbonate, pas d'acide
+        const up = w.solveMineralAdditions(SOFT_WATER, w.WATER_PROFILES.dublin.ions, 20, { acid });
+        assert.ok(up.sodiumBicarbonate > 0, `${acid} : bicarbonate pour Dublin`);
+        assert.ok(!(up[acid] > 0), `${acid} : pas d'acide pour Dublin`);
+    }
 });

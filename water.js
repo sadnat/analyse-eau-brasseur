@@ -91,21 +91,41 @@ const ION_KEYS = {
     hco3: 'HCO3'
 };
 
-// AMS (Murphy & Son) : mélange d'acides chlorhydrique et sulfurique, dosé en mL.
-// Analyse fabricant : densité 1,085 ; acidité 18,5 % (exprimée en H2SO4) ; chlorures 6,5 % ; sulfates 9,0 %.
-// Par mL : 1085 × 0,185 / 98,08 × 2 = 4,09 meq d'acide (cohérent avec les 4,02 meq portés par Cl⁻ et SO₄²⁻),
-// 1085 × 0,065 = 70,5 mg de chlorures et 1085 × 0,090 = 97,7 mg de sulfates.
-const AMS_PER_ML = {
-    acidMeq: 1085 * 0.185 / 98.08 * 2,
-    chloride: 1085 * 0.065,
-    sulfate: 1085 * 0.090
+// Acides de brassage, dosés en mL. meqPerMl : acide disponible pour neutraliser l'alcalinité,
+// évalué au pH de maische de référence (5,4) pour les acides faibles ; ions : apports en mg par mL.
+//  - AMS (Murphy & Son, HCl + H2SO4) : densité 1,085 ; acidité 18,5 % exprimée en H2SO4 → 1085 × 0,185 / 98,08 × 2
+//    = 4,09 meq (cohérent avec les 4,02 meq portés par Cl⁻ et SO₄²⁻ mesurés) ; Cl 6,5 % ; SO4 9,0 %
+//  - Phosphorique 75 % : densité 1,579 → 12,08 mmol ; 1,015 H⁺ cédé par molécule à pH 5,4 (pKa 2,15 / 7,20)
+//  - Lactique 80 % : densité 1,20 → 10,66 mmol ; dissocié à 97 % à pH 5,4 (pKa 3,86) ; 949 mg de lactate par mL
+const MASH_PH_REFERENCE = 5.4;
+const dissociation = (pKa) => 1 / (1 + 10 ** (pKa - MASH_PH_REFERENCE));
+const ACIDS = {
+    ams: {
+        meqPerMl: 1085 * 0.185 / 98.08 * 2,
+        ions: { 'CHLORURES': 1085 * 0.065, 'SULFATES (SO4)': 1085 * 0.090 }
+    },
+    phosphoric75: {
+        meqPerMl: 1579 * 0.75 / 97.995 * (dissociation(2.15) + dissociation(7.20)),
+        ions: {}
+    },
+    lactic80: {
+        meqPerMl: 1200 * 0.80 / 90.08 * dissociation(3.86),
+        ions: {},
+        lactatePerMl: 1200 * 0.80 / 90.08 * 89.07
+    }
 };
+// Seuil de perception du lactate souvent cité en brassage (mg/L)
+const LACTATE_TASTE_THRESHOLD = 400;
 const HCO3_MG_PER_MEQ = 61.02;
 const CACO3_MG_PER_MEQ = 50.04;
 
-// Effet de l'AMS sur l'alcalinité : alcalinité neutralisée et acide en excès (mg/L CaCO3)
-const amsEffect = (milliliters, liters, hco3) => {
-    const acid = (milliliters > 0 && liters > 0) ? milliliters * AMS_PER_ML.acidMeq / liters : 0;
+// Acide total apporté (meq/L) par les acides présents dans les ajouts
+const acidMeqPerLiter = (additions, liters) => Object.entries(ACIDS)
+    .reduce((sum, [id, acid]) => sum + (additions[id] > 0 && liters > 0 ? additions[id] * acid.meqPerMl / liters : 0), 0);
+
+// Effet des acides sur l'alcalinité : alcalinité neutralisée et acide en excès (mg/L CaCO3)
+const acidEffect = (additions, liters, hco3) => {
+    const acid = acidMeqPerLiter(additions, liters);
     const alkalinity = (hco3 || 0) / HCO3_MG_PER_MEQ;
     return {
         neutralized: Math.min(acid, alkalinity) * CACO3_MG_PER_MEQ,
@@ -113,7 +133,7 @@ const amsEffect = (milliliters, liters, hco3) => {
     };
 };
 
-// Fonction pour calculer les concentrations après ajout de minéraux (sels en g, AMS en mL)
+// Fonction pour calculer les concentrations après ajout de minéraux (sels en g, acides en mL)
 function calculateMineralAdditions(baseWater, additions, waterQuantity) {
     const result = { ...baseWater };
     const liters = parseFloat(waterQuantity);
@@ -127,12 +147,15 @@ function calculateMineralAdditions(baseWater, additions, waterQuantity) {
         }
     });
 
-    // AMS : apporte chlorures et sulfates, puis neutralise les bicarbonates (y compris ceux ajoutés)
-    const ams = additions.ams;
-    if (ams > 0) {
-        result['CHLORURES'] = (result['CHLORURES'] || 0) + ams * AMS_PER_ML.chloride / liters;
-        result['SULFATES (SO4)'] = (result['SULFATES (SO4)'] || 0) + ams * AMS_PER_ML.sulfate / liters;
-        const { neutralized } = amsEffect(ams, liters, result['HCO3']);
+    // Acides : apports d'ions (AMS), puis neutralisation des bicarbonates (y compris ceux ajoutés)
+    Object.entries(ACIDS).forEach(([id, acid]) => {
+        if (!(additions[id] > 0)) return;
+        Object.entries(acid.ions).forEach(([ion, mgPerMl]) => {
+            result[ion] = (result[ion] || 0) + additions[id] * mgPerMl / liters;
+        });
+    });
+    if (acidMeqPerLiter(additions, liters) > 0) {
+        const { neutralized } = acidEffect(additions, liters, result['HCO3']);
         const neutralizedMeq = neutralized / CACO3_MG_PER_MEQ;
         result['HCO3'] = Math.max((result['HCO3'] || 0) - neutralizedMeq * HCO3_MG_PER_MEQ, 0);
         // TAC en °f : 1 meq/L = 5 °f
@@ -215,22 +238,30 @@ const describeIonBalance = (balance) => {
 // Les ajouts ne peuvent qu'augmenter les concentrations : un ion déjà au-dessus de la cible reste au-dessus.
 const SOLVER_SALTS = ['calciumSulfate', 'magnesiumSulfate', 'calciumChloride', 'sodiumChloride', 'sodiumBicarbonate'];
 
-// Apport (mg/L) de l'AMS par mL/L : chlorures et sulfates ajoutés, bicarbonates neutralisés.
+// Apport (mg/L) d'un acide par mL/L : ions ajoutés, bicarbonates neutralisés.
 // Linéaire tant qu'il reste de l'alcalinité ; le calcul final (calculateMineralAdditions) borne à zéro.
-const AMS_CONTRIBUTION = {
-    'CHLORURES': AMS_PER_ML.chloride,
-    'SULFATES (SO4)': AMS_PER_ML.sulfate,
-    'HCO3': -AMS_PER_ML.acidMeq * HCO3_MG_PER_MEQ
+const acidContribution = (acidId, ion) => {
+    const acid = ACIDS[acidId];
+    if (ion === 'HCO3') return -acid.meqPerMl * HCO3_MG_PER_MEQ;
+    return acid.ions[ion] || 0;
 };
 
-// Option useAms : l'AMS (en mL) peut faire partie de la suggestion, seul moyen ici de baisser les bicarbonates
-const solveMineralAdditions = (baseWater, targetIons, liters, { useAms = false } = {}) => {
+// Arrondi des quantités suggérées : sels à 0,1 g, AMS à 0,5 mL, acides concentrés à 0,1 mL
+const SUGGESTION_PRECISION = { ams: 2 };
+
+// Option acid : un acide (clé de ACIDS) peut faire partie de la suggestion, seul moyen ici de baisser les bicarbonates
+const solveMineralAdditions = (baseWater, targetIons, liters, { acid = null } = {}) => {
     const ions = PROFILE_IONS;
     const scale = ions.map(ion => Math.max(targetIons[ion], 10));
-    const variables = useAms ? [...SOLVER_SALTS, 'ams'] : SOLVER_SALTS;
-    // Apport en mg/L par g/L de chaque sel (par mL/L pour l'AMS)
+    // Jamais à la fois un acide et du bicarbonate (ils s'annuleraient) : l'acide seulement s'il faut baisser
+    // les bicarbonates, le bicarbonate seulement s'il faut les monter
+    const lowerAlkalinity = ACIDS[acid] && targetIons['HCO3'] < (baseWater['HCO3'] || 0);
+    const variables = lowerAlkalinity
+        ? [...SOLVER_SALTS.filter(salt => salt !== 'sodiumBicarbonate'), acid]
+        : SOLVER_SALTS;
+    // Apport en mg/L par g/L de chaque sel (par mL/L pour un acide)
     const contribution = variables.map(salt => ions.map(ion => {
-        if (salt === 'ams') return AMS_CONTRIBUTION[ion] || 0;
+        if (ACIDS[salt]) return acidContribution(salt, ion);
         const element = Object.keys(ION_KEYS).find(k => ION_KEYS[k] === ion);
         return (MINERAL_CONVERSIONS[salt][element] || 0) * 1000;
     }));
@@ -256,10 +287,10 @@ const solveMineralAdditions = (baseWater, targetIons, liters, { useAms = false }
         });
     }
 
-    // Conversion par litre → quantité pour le volume : sels arrondis à 0,1 g, AMS à 0,5 mL
+    // Conversion par litre → quantité pour le volume
     const amounts = {};
     variables.forEach((salt, j) => {
-        const precision = salt === 'ams' ? 2 : 10;
+        const precision = SUGGESTION_PRECISION[salt] || 10;
         amounts[salt] = Math.round(x[j] * liters * precision) / precision;
     });
     return amounts;
@@ -642,7 +673,8 @@ if (typeof module !== 'undefined') {
         HISTORY_PERIODS,
         filterByPeriod,
         profileDeviation,
-        AMS_PER_ML,
-        amsEffect
+        ACIDS,
+        LACTATE_TASTE_THRESHOLD,
+        acidEffect
     };
 }

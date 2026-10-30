@@ -450,7 +450,7 @@ let calculatorBaseWaters = null;
 let calculatorBaseWater = null;
 let calculatorInitialized = false;
 
-// Ajouts du calculateur : sels en grammes (identifiants = clés de MINERAL_CONVERSIONS) et AMS en mL
+// Ajouts du calculateur : sels en grammes (identifiants = clés de MINERAL_CONVERSIONS), acides en mL (clés de ACIDS)
 const SALTS = [
     { id: 'calciumSulfate', name: 'Sulfate de calcium (gypse)', formula: 'CaSO₄·2H₂O' },
     { id: 'magnesiumSulfate', name: 'Sulfate de magnésium (sel d\'Epsom)', formula: 'MgSO₄·7H₂O' },
@@ -459,7 +459,9 @@ const SALTS = [
     { id: 'calciumCarbonate', name: 'Carbonate de calcium (craie)', formula: 'CaCO₃' },
     { id: 'sodiumBicarbonate', name: 'Bicarbonate de sodium', formula: 'NaHCO₃' },
     { id: 'potassiumChloride', name: 'Chlorure de potassium', formula: 'KCl' },
-    { id: 'ams', name: 'AMS (acide de brassage)', formula: 'HCl + H₂SO₄', unit: 'mL', step: 0.5 }
+    { id: 'ams', name: 'AMS (acide de brassage)', formula: 'HCl + H₂SO₄', unit: 'mL', step: 0.5, acid: true },
+    { id: 'phosphoric75', name: 'Acide phosphorique 75 %', formula: 'H₃PO₄', unit: 'mL', step: 0.1, acid: true },
+    { id: 'lactic80', name: 'Acide lactique 80 %', formula: 'C₃H₆O₃', unit: 'mL', step: 0.1, acid: true }
 ];
 const MINERAL_INPUT_IDS = SALTS.map(salt => salt.id);
 const SALT_UNITS = Object.fromEntries(SALTS.map(salt => [salt.id, salt.unit || 'g']));
@@ -467,8 +469,10 @@ const SALT_STEP = 0.1;
 
 // Champs de sels avec boutons −/+ (générés une seule fois)
 const renderSaltInputs = () => {
-    const container = document.getElementById('saltInputs');
+    const saltsGrid = document.getElementById('saltInputs');
+    const acidsGrid = document.getElementById('acidInputs');
     SALTS.forEach(salt => {
+        const container = salt.acid ? acidsGrid : saltsGrid;
         const field = document.createElement('div');
         const label = document.createElement('label');
         label.htmlFor = salt.id;
@@ -512,13 +516,6 @@ const renderSaltInputs = () => {
         input.addEventListener('input', updateCalculations);
 
         field.append(label, row);
-        if (salt.id === 'ams') {
-            // Effet de l'acide sur l'alcalinité, mis à jour par updateCalculations
-            const hint = document.createElement('p');
-            hint.id = 'amsHint';
-            hint.className = 'mt-1 text-xs text-slate-400';
-            field.appendChild(hint);
-        }
         container.appendChild(field);
     });
 };
@@ -592,25 +589,32 @@ const renderSummaryBar = (water) => {
         + (ratio === null ? '' : ` · SO₄/Cl ${formatValue(Math.round(ratio * 100) / 100)}`);
 };
 
-// Effet de l'AMS : alcalinité neutralisée et éventuel excès d'acide
-const renderAmsHint = (state) => {
-    const hint = document.getElementById('amsHint');
-    if (!hint) return;
-    const ml = state.additions.ams;
-    hint.className = 'mt-1 text-xs text-slate-400';
-    if (!(ml > 0)) {
-        hint.textContent = '1 mL par litre neutralise ≈ 205 mg/L CaCO₃ d\'alcalinité et apporte 70 mg/L de chlorures et 98 mg/L de sulfates.';
+// Effet des acides : alcalinité neutralisée, excès d'acide et lactate
+const renderAcidHint = (state) => {
+    const hint = document.getElementById('acidHint');
+    const fmt = (v) => formatValue(Math.round(v));
+    const acidIds = Object.keys(ACIDS).filter(id => state.additions[id] > 0);
+    hint.innerHTML = '';
+    const line = (text, className = 'text-slate-400') => appendText(hint, 'p', text, className);
+    if (acidIds.length === 0) {
+        line('Par mL et par litre d\'eau, l\'AMS neutralise ≈ 205 mg/L CaCO₃ d\'alcalinité (et apporte chlorures et sulfates), '
+            + 'l\'acide phosphorique 75 % ≈ 614 et l\'acide lactique 80 % ≈ 518.');
         return;
     }
-    // Alcalinité disponible : eau de base + bicarbonates éventuellement ajoutés (avant acide)
-    const withoutAcid = calculateMineralAdditions(state.baseWater, { ...state.additions, ams: 0 }, state.liters);
-    const { neutralized, excess } = amsEffect(ml, state.liters, withoutAcid['HCO3']);
-    const fmt = (v) => formatValue(Math.round(v));
+    // Alcalinité disponible : eau de base + bicarbonates éventuellement ajoutés (avant acides)
+    const withoutAcid = { ...state.additions };
+    acidIds.forEach(id => { withoutAcid[id] = 0; });
+    const available = calculateMineralAdditions(state.baseWater, withoutAcid, state.liters)['HCO3'];
+    const { neutralized, excess } = acidEffect(state.additions, state.liters, available);
     if (excess > 1) {
-        hint.className = 'mt-1 text-xs text-amber-300';
-        hint.textContent = `Toute l'alcalinité est neutralisée (${fmt(neutralized)} mg/L CaCO₃) ; l'excès d'acide (${fmt(excess)} mg/L CaCO₃) abaissera directement le pH de la maische.`;
+        line(`Toute l'alcalinité est neutralisée (${fmt(neutralized)} mg/L CaCO₃) ; l'excès d'acide (${fmt(excess)} mg/L CaCO₃) abaissera directement le pH de la maische.`, 'text-amber-300');
     } else {
-        hint.textContent = `Neutralise ${fmt(neutralized)} mg/L CaCO₃ d'alcalinité, sur ${fmt(withoutAcid['HCO3'] / 61.02 * 50.04)} disponibles.`;
+        line(`Les acides neutralisent ${fmt(neutralized)} mg/L CaCO₃ d'alcalinité, sur ${fmt(available / 61.02 * 50.04)} disponibles.`);
+    }
+    // Lactate : goût acidulé au-delà du seuil de perception
+    const lactate = state.liters > 0 ? (state.additions.lactic80 || 0) * ACIDS.lactic80.lactatePerMl / state.liters : 0;
+    if (lactate > LACTATE_TASTE_THRESHOLD) {
+        line(`Lactate ${fmt(lactate)} mg/L : au-delà de ~${LACTATE_TASTE_THRESHOLD} mg/L, un goût acidulé peut apparaître.`, 'text-amber-300');
     }
 };
 
@@ -623,7 +627,7 @@ const updateCalculations = () => {
     document.getElementById('legendNeutral').classList.toggle('hidden', Boolean(state.profile));
     document.getElementById('legendDeviation').classList.toggle('hidden', !state.profile);
     renderCompactIndicators(document.getElementById('modifiedIndicators'), state.modifiedWater);
-    renderAmsHint(state);
+    renderAcidHint(state);
     renderSummaryBar(state.modifiedWater);
     const note = document.getElementById('solverNote');
     note.textContent = solverNote;
@@ -645,8 +649,8 @@ const applySuggestedAdditions = () => {
     const liters = parseFloat(document.getElementById('waterQuantity').value);
     if (!profile || !calculatorBaseWater || !(liters > 0)) return;
 
-    const useAms = document.getElementById('solverUseAms').checked;
-    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters, { useAms });
+    const acid = document.getElementById('solverAcid').value || null;
+    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters, { acid });
     MINERAL_INPUT_IDS.forEach(id => {
         document.getElementById(id).value = grams[id] || 0;
     });
@@ -656,7 +660,7 @@ const applySuggestedAdditions = () => {
     const tooHigh = PROFILE_IONS.filter(ion => result[ion] > Math.max(profile.ions[ion] * 1.15, profile.ions[ion] + 10));
     solverNote = tooHigh.length > 0
         ? `Au-dessus de la cible : ${tooHigh.map(ion => PARAMETERS_OF_INTEREST[ion].label).join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée`
-            + (!useAms && tooHigh.includes('HCO3') ? ', ou autorisez l\'AMS pour neutraliser les bicarbonates.' : '.')
+            + (!acid && tooHigh.includes('HCO3') ? ', ou choisissez un acide pour neutraliser les bicarbonates.' : '.')
         : '';
 
     updateCalculations();
