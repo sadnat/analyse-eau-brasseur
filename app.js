@@ -4,98 +4,88 @@ function debug(message) {
     if (DEBUG_ENABLED) console.log(message);
 }
 
-// Fonction pour attendre que le DOM soit prêt
-function waitForElement(selector, callback, maxAttempts = 50) {
-    let attempts = 0;
+// Sélection courante (département, commune, réseau) : reflétée dans l'URL et mémorisée localement
+const SELECTION_STORAGE_KEY = 'eau-brasseur:selection';
+const SELECTION_PATTERNS = { dept: /^[0-9AB]{2,3}$/i, commune: /^[0-9AB]{5}$/i, reseau: /^[0-9AB]{9}$/i };
 
-    const checkElement = () => {
-        attempts++;
-        const element = document.querySelector(selector);
-
-        if (element) {
-            debug(`Element ${selector} found after ${attempts} attempts`);
-            callback(element);
-            return;
-        }
-
-        if (attempts < maxAttempts) {
-            setTimeout(checkElement, 100);
-        } else {
-            const error = `Element ${selector} not found after ${maxAttempts} attempts`;
-            console.error(error);
-            debug(error);
-        }
-    };
-
-    checkElement();
-}
-
-// Fonction pour attendre que tout soit chargé
-function waitForDOM(callback, maxAttempts = 10) {
-    let attempts = 0;
-
-    function checkElements() {
-        attempts++;
-        debug(`Attempt ${attempts} to find DOM elements`);
-
-        const elements = {
-            departementSelect: document.getElementById('departementSelect'),
-            communeSelect: document.getElementById('communeSelect'),
-            networkButtons: document.getElementById('networkButtons'),
-            currentParameters: document.getElementById('currentParameters'),
-            charts: document.getElementById('charts'),
-            chartsGrid: document.getElementById('chartsGrid'),
-            loading: document.getElementById('loading'),
-            error: document.getElementById('error')
-        };
-
-        const missingElements = Object.entries(elements)
-            .filter(([_, element]) => !element)
-            .map(([name]) => name);
-
-        if (missingElements.length === 0) {
-            debug('All elements found successfully');
-            callback(elements);
-            return;
-        }
-
-        if (attempts < maxAttempts) {
-            debug(`Missing elements: ${missingElements.join(', ')}. Retrying...`);
-            setTimeout(checkElements, 200);
-        } else {
-            const error = `Failed to find elements after ${maxAttempts} attempts: ${missingElements.join(', ')}`;
-            console.error(error);
-            debug(error);
-        }
-    }
-
-    checkElements();
-}
-
-// Fonction principale de l'application
-function initApp() {
-    // Attendre que les éléments soient disponibles
-    waitForElement('#departementSelect', (departementSelect) => {
-        waitForElement('#communeSelect', (communeSelect) => {
-            // Configuration des événements
-            departementSelect.addEventListener('change', (e) => {
-                loadCommunes(e.target.value);
-                hideResults();
-            });
-
-            communeSelect.addEventListener('change', (e) => {
-                if (e.target.value) {
-                    loadAnalyses(e.target.value);
-                    hideResults();
-                } else {
-                    hideResults();
-                }
-            });
-
-            // Charger les départements
-            loadDepartements();
-        });
+// Garder uniquement les codes au format attendu
+const sanitizeSelection = (selection) => {
+    const clean = {};
+    Object.entries(SELECTION_PATTERNS).forEach(([key, pattern]) => {
+        if (typeof selection[key] === 'string' && pattern.test(selection[key])) clean[key] = selection[key];
     });
+    return clean;
+};
+
+const saveSelection = (selection) => {
+    const clean = sanitizeSelection(selection);
+    const url = new URL(window.location.href);
+    Object.keys(SELECTION_PATTERNS).forEach(key => {
+        if (clean[key]) url.searchParams.set(key, clean[key]);
+        else url.searchParams.delete(key);
+    });
+    window.history.replaceState(null, '', url);
+    try {
+        localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(clean));
+    } catch {
+        // Stockage indisponible (navigation privée...) : le lien reste partageable
+    }
+};
+
+// Sélection à restaurer : paramètres d'URL (lien partagé) sinon dernière sélection locale
+const readSelection = () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('dept')) {
+        return sanitizeSelection(Object.fromEntries(params));
+    }
+    try {
+        return sanitizeSelection(JSON.parse(localStorage.getItem(SELECTION_STORAGE_KEY)) || {});
+    } catch {
+        return {};
+    }
+};
+
+// Rejouer la sélection : département → commune → réseau
+const restoreSelection = async () => {
+    const selection = readSelection();
+    const departementSelect = document.getElementById('departementSelect');
+    const communeSelect = document.getElementById('communeSelect');
+    const hasOption = (select, value) => Array.from(select.options).some(o => o.value === value);
+
+    if (!selection.dept || !hasOption(departementSelect, selection.dept)) return;
+    departementSelect.value = selection.dept;
+    await loadCommunes(selection.dept);
+
+    if (!selection.commune || !hasOption(communeSelect, selection.commune)) return;
+    communeSelect.value = selection.commune;
+    await loadAnalyses(selection.commune);
+
+    if (!selection.reseau) return;
+    const button = Array.from(document.querySelectorAll('#networkButtons button'))
+        .find(btn => btn.dataset.networkCode === selection.reseau);
+    if (button) button.click();
+};
+
+// Fonction principale de l'application (script chargé en defer : le DOM est prêt)
+function initApp() {
+    const departementSelect = document.getElementById('departementSelect');
+    const communeSelect = document.getElementById('communeSelect');
+
+    departementSelect.addEventListener('change', (e) => {
+        saveSelection({ dept: e.target.value });
+        loadCommunes(e.target.value);
+        hideResults();
+    });
+
+    communeSelect.addEventListener('change', (e) => {
+        saveSelection({ dept: departementSelect.value, commune: e.target.value });
+        if (e.target.value) {
+            loadAnalyses(e.target.value);
+        }
+        hideResults();
+    });
+
+    loadDepartements().then(restoreSelection);
 }
 
 // Sources de données
@@ -176,67 +166,183 @@ const MINERAL_CONVERSIONS = {
     }
 };
 
+// Correspondance élément (MINERAL_CONVERSIONS) → paramètre affiché
+const ION_KEYS = {
+    ca: 'CALCIUM (CA)',
+    mg: 'MAGNESIUM (MG)',
+    na: 'SODIUM (NA)',
+    k: 'POTASSIUM (K)',
+    so4: 'SULFATES (SO4)',
+    cl: 'CHLORURES',
+    hco3: 'HCO3'
+};
+
 // Fonction pour calculer les concentrations après ajout de minéraux
 function calculateMineralAdditions(baseWater, additions, waterQuantity) {
     const result = { ...baseWater };
     const liters = parseFloat(waterQuantity);
     if (!(liters > 0)) return result;
 
-    // Fonction pour ajouter un minéral aux résultats
-    const addMineral = (amount, mineral, conversions) => {
-        for (const [element, percentage] of Object.entries(conversions)) {
-            const addedAmount = (amount * percentage * 1000) / liters; // Conversion g -> mg/L
-            switch (element) {
-                case 'ca':
-                    result['CALCIUM (CA)'] = (result['CALCIUM (CA)'] || 0) + addedAmount;
-                    break;
-                case 'mg':
-                    result['MAGNESIUM (MG)'] = (result['MAGNESIUM (MG)'] || 0) + addedAmount;
-                    break;
-                case 'na':
-                    result['SODIUM (NA)'] = (result['SODIUM (NA)'] || 0) + addedAmount;
-                    break;
-                case 'k':
-                    result['POTASSIUM (K)'] = (result['POTASSIUM (K)'] || 0) + addedAmount;
-                    break;
-                case 'so4':
-                    result['SULFATES (SO4)'] = (result['SULFATES (SO4)'] || 0) + addedAmount;
-                    break;
-                case 'cl':
-                    result['CHLORURES'] = (result['CHLORURES'] || 0) + addedAmount;
-                    break;
-                case 'hco3':
-                    result['HCO3'] = (result['HCO3'] || 0) + addedAmount;
-                    break;
-            }
+    Object.entries(additions).forEach(([mineral, grams]) => {
+        if (!(grams > 0) || !MINERAL_CONVERSIONS[mineral]) return;
+        for (const [element, percentage] of Object.entries(MINERAL_CONVERSIONS[mineral])) {
+            const key = ION_KEYS[element];
+            result[key] = (result[key] || 0) + (grams * percentage * 1000) / liters; // Conversion g -> mg/L
         }
-    };
-
-    // Ajouter chaque minéral
-    if (additions.calciumSulfate > 0) {
-        addMineral(additions.calciumSulfate, 'calciumSulfate', MINERAL_CONVERSIONS.calciumSulfate);
-    }
-    if (additions.magnesiumSulfate > 0) {
-        addMineral(additions.magnesiumSulfate, 'magnesiumSulfate', MINERAL_CONVERSIONS.magnesiumSulfate);
-    }
-    if (additions.calciumChloride > 0) {
-        addMineral(additions.calciumChloride, 'calciumChloride', MINERAL_CONVERSIONS.calciumChloride);
-    }
-    if (additions.sodiumChloride > 0) {
-        addMineral(additions.sodiumChloride, 'sodiumChloride', MINERAL_CONVERSIONS.sodiumChloride);
-    }
-    if (additions.calciumCarbonate > 0) {
-        addMineral(additions.calciumCarbonate, 'calciumCarbonate', MINERAL_CONVERSIONS.calciumCarbonate);
-    }
-    if (additions.sodiumBicarbonate > 0) {
-        addMineral(additions.sodiumBicarbonate, 'sodiumBicarbonate', MINERAL_CONVERSIONS.sodiumBicarbonate);
-    }
-    if (additions.potassiumChloride > 0) {
-        addMineral(additions.potassiumChloride, 'potassiumChloride', MINERAL_CONVERSIONS.potassiumChloride);
-    }
+    });
 
     return result;
 }
+
+// Ions comparés aux profils cibles
+const PROFILE_IONS = ['CALCIUM (CA)', 'MAGNESIUM (MG)', 'SODIUM (NA)', 'SULFATES (SO4)', 'CHLORURES', 'HCO3'];
+
+// Profils d'eau de référence (mg/L) — valeurs indicatives couramment citées en brassage
+const WATER_PROFILES = {
+    pilsen: { name: 'Pilsen', description: 'Eau très douce — pils, lagers pâles', ions: { 'CALCIUM (CA)': 7, 'MAGNESIUM (MG)': 2, 'SODIUM (NA)': 2, 'SULFATES (SO4)': 5, 'CHLORURES': 5, 'HCO3': 15 } },
+    munich: { name: 'Munich', description: 'Eau carbonatée — dunkel, bocks, lagers ambrées', ions: { 'CALCIUM (CA)': 75, 'MAGNESIUM (MG)': 18, 'SODIUM (NA)': 2, 'SULFATES (SO4)': 10, 'CHLORURES': 2, 'HCO3': 150 } },
+    vienne: { name: 'Vienne', description: 'Lagers de Vienne, Märzen', ions: { 'CALCIUM (CA)': 200, 'MAGNESIUM (MG)': 60, 'SODIUM (NA)': 8, 'SULFATES (SO4)': 125, 'CHLORURES': 12, 'HCO3': 120 } },
+    dortmund: { name: 'Dortmund', description: 'Lagers export', ions: { 'CALCIUM (CA)': 225, 'MAGNESIUM (MG)': 40, 'SODIUM (NA)': 60, 'SULFATES (SO4)': 120, 'CHLORURES': 60, 'HCO3': 220 } },
+    burton: { name: 'Burton-on-Trent', description: 'Très sulfatée — pale ales et IPA anglaises', ions: { 'CALCIUM (CA)': 295, 'MAGNESIUM (MG)': 45, 'SODIUM (NA)': 55, 'SULFATES (SO4)': 725, 'CHLORURES': 25, 'HCO3': 300 } },
+    dublin: { name: 'Dublin', description: 'Très carbonatée — stouts, porters', ions: { 'CALCIUM (CA)': 118, 'MAGNESIUM (MG)': 4, 'SODIUM (NA)': 12, 'SULFATES (SO4)': 54, 'CHLORURES': 19, 'HCO3': 319 } },
+    londres: { name: 'Londres', description: 'Porters, bitters', ions: { 'CALCIUM (CA)': 52, 'MAGNESIUM (MG)': 32, 'SODIUM (NA)': 86, 'SULFATES (SO4)': 32, 'CHLORURES': 34, 'HCO3': 156 } },
+    edimbourg: { name: 'Édimbourg', description: 'Scotch ales', ions: { 'CALCIUM (CA)': 125, 'MAGNESIUM (MG)': 25, 'SODIUM (NA)': 55, 'SULFATES (SO4)': 140, 'CHLORURES': 65, 'HCO3': 225 } },
+    houblonne: { name: 'Pale ale / IPA (moderne)', description: 'Houblonné, sec et amer — ratio SO4/Cl élevé', ions: { 'CALCIUM (CA)': 110, 'MAGNESIUM (MG)': 18, 'SODIUM (NA)': 16, 'SULFATES (SO4)': 300, 'CHLORURES': 55, 'HCO3': 40 } },
+    equilibre: { name: 'Équilibré', description: 'Polyvalent — blondes, ambrées, saisons', ions: { 'CALCIUM (CA)': 70, 'MAGNESIUM (MG)': 10, 'SODIUM (NA)': 15, 'SULFATES (SO4)': 80, 'CHLORURES': 70, 'HCO3': 50 } },
+    neipa: { name: 'NEIPA', description: 'Rond et juteux — ratio SO4/Cl inférieur à 1', ions: { 'CALCIUM (CA)': 100, 'MAGNESIUM (MG)': 15, 'SODIUM (NA)': 15, 'SULFATES (SO4)': 75, 'CHLORURES': 150, 'HCO3': 30 } }
+};
+
+// Alcalinité résiduelle (Kolbach) en mg/L CaCO3 : alcalinité − (Ca/3,5 + Mg/7) exprimés en CaCO3
+const calculateResidualAlkalinity = (water) => {
+    const alkalinity = (water['HCO3'] || 0) * 50 / 61;
+    const caHardness = (water['CALCIUM (CA)'] || 0) * 2.497;
+    const mgHardness = (water['MAGNESIUM (MG)'] || 0) * 4.118;
+    return alkalinity - (caHardness / 3.5 + mgHardness / 7);
+};
+
+// Ratio sulfates / chlorures (null si pas de chlorures)
+const calculateSulfateChlorideRatio = (water) => {
+    const cl = water['CHLORURES'] || 0;
+    return cl > 0 ? (water['SULFATES (SO4)'] || 0) / cl : null;
+};
+
+// Balance ionique : écart relatif entre cations et anions (meq/L)
+const calculateIonBalance = (water) => {
+    const cations = (water['CALCIUM (CA)'] || 0) / 20.04 + (water['MAGNESIUM (MG)'] || 0) / 12.15
+        + (water['SODIUM (NA)'] || 0) / 22.99 + (water['POTASSIUM (K)'] || 0) / 39.10;
+    const anions = (water['HCO3'] || 0) / 61.02 + (water['SULFATES (SO4)'] || 0) / 48.03
+        + (water['CHLORURES'] || 0) / 35.45;
+    if (cations + anions === 0) return null;
+    return { cations, anions, error: Math.abs(cations - anions) / (cations + anions) * 100 };
+};
+
+// Interprétations (classes Tailwind complètes pour la compilation)
+const describeResidualAlkalinity = (ra) => {
+    if (ra <= 0) return { text: 'Idéale pour les bières pâles', color: 'text-sky-400' };
+    if (ra <= 60) return { text: 'Adaptée aux bières ambrées', color: 'text-amber-400' };
+    return { text: 'Adaptée aux bières brunes et stouts', color: 'text-orange-400' };
+};
+
+const describeSulfateChlorideRatio = (ratio) => {
+    if (ratio === null) return { text: 'Chlorures non mesurés', color: 'text-slate-400' };
+    if (ratio < 0.5) return { text: 'Très malté', color: 'text-amber-400' };
+    if (ratio < 0.8) return { text: 'Malté', color: 'text-amber-400' };
+    if (ratio <= 1.5) return { text: 'Équilibré', color: 'text-emerald-400' };
+    if (ratio <= 3) return { text: 'Houblonné', color: 'text-lime-400' };
+    return { text: 'Très houblonné, amertume sèche', color: 'text-lime-400' };
+};
+
+const describeIonBalance = (balance) => {
+    if (!balance) return { text: 'Données insuffisantes', color: 'text-slate-400' };
+    if (balance.error <= 5) return { text: 'Analyse cohérente', color: 'text-emerald-400' };
+    if (balance.error <= 10) return { text: 'Écart acceptable', color: 'text-amber-400' };
+    return { text: 'Analyse incomplète (mesures de dates différentes ?)', color: 'text-red-400' };
+};
+
+// Créer une tuile d'indicateur
+const createIndicatorTile = (title, value, interpretation) => {
+    const tile = document.createElement('div');
+    tile.className = 'p-4 rounded-xl bg-slate-800/40 border border-slate-700/50';
+    const titleEl = document.createElement('p');
+    titleEl.className = 'text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2';
+    titleEl.textContent = title;
+    const valueEl = document.createElement('p');
+    valueEl.className = 'text-2xl font-bold text-white';
+    valueEl.textContent = value;
+    const hintEl = document.createElement('p');
+    hintEl.className = `text-xs mt-1 ${interpretation.color}`;
+    hintEl.textContent = interpretation.text;
+    tile.append(titleEl, valueEl, hintEl);
+    return tile;
+};
+
+// Afficher les indicateurs brassicoles d'une eau dans un conteneur
+const renderBrewingIndicators = (container, water) => {
+    if (!container) return;
+    container.innerHTML = '';
+
+    const ra = calculateResidualAlkalinity(water);
+    container.appendChild(createIndicatorTile(
+        'Alcalinité résiduelle',
+        `${formatValue(Math.round(ra))} mg/L CaCO₃ (${formatValue(Math.round(ra / 10 * 10) / 10)} °f)`,
+        describeResidualAlkalinity(ra)
+    ));
+
+    const ratio = calculateSulfateChlorideRatio(water);
+    container.appendChild(createIndicatorTile(
+        'Ratio SO₄ / Cl',
+        ratio === null ? '—' : formatValue(Math.round(ratio * 100) / 100),
+        describeSulfateChlorideRatio(ratio)
+    ));
+
+    const balance = calculateIonBalance(water);
+    container.appendChild(createIndicatorTile(
+        'Balance ionique',
+        balance ? `${formatValue(Math.round(balance.error * 10) / 10)} %` : '—',
+        describeIonBalance(balance)
+    ));
+};
+
+// Solveur : quantités de sels (g) pour approcher un profil cible.
+// Moindres carrés relatifs sous contrainte de positivité (descente par coordonnées).
+// Les ajouts ne peuvent qu'augmenter les concentrations : un ion déjà au-dessus de la cible reste au-dessus.
+const SOLVER_SALTS = ['calciumSulfate', 'magnesiumSulfate', 'calciumChloride', 'sodiumChloride', 'sodiumBicarbonate'];
+
+const solveMineralAdditions = (baseWater, targetIons, liters) => {
+    const ions = PROFILE_IONS;
+    const scale = ions.map(ion => Math.max(targetIons[ion], 10));
+    // Apport en mg/L par g/L de chaque sel
+    const contribution = SOLVER_SALTS.map(salt => ions.map(ion => {
+        const element = Object.keys(ION_KEYS).find(k => ION_KEYS[k] === ion);
+        return (MINERAL_CONVERSIONS[salt][element] || 0) * 1000;
+    }));
+
+    const x = SOLVER_SALTS.map(() => 0);
+    const residual = ions.map((ion, i) => ((baseWater[ion] || 0) - targetIons[ion]) / scale[i]);
+
+    for (let iter = 0; iter < 500; iter++) {
+        SOLVER_SALTS.forEach((_, j) => {
+            let gradient = 0;
+            let curvature = 0;
+            ions.forEach((_, i) => {
+                const a = contribution[j][i] / scale[i];
+                gradient += a * residual[i];
+                curvature += a * a;
+            });
+            if (curvature === 0) return;
+            const next = Math.max(0, x[j] - gradient / curvature);
+            const delta = next - x[j];
+            if (delta === 0) return;
+            ions.forEach((_, i) => { residual[i] += contribution[j][i] / scale[i] * delta; });
+            x[j] = next;
+        });
+    }
+
+    // Conversion g/L → grammes pour le volume, arrondi au pas des champs (0,1 g)
+    const grams = {};
+    SOLVER_SALTS.forEach((salt, j) => { grams[salt] = Math.round(x[j] * liters * 10) / 10; });
+    return grams;
+};
 
 // Eau de base courante du calculateur (mise à jour à chaque sélection de réseau)
 let calculatorBaseWater = null;
@@ -292,6 +398,99 @@ const updateCalculations = () => {
 
     const modifiedWater = calculateMineralAdditions(calculatorBaseWater, additions, waterQuantity);
     displayCalculatorParameters(document.getElementById('modifiedWaterParams'), modifiedWater);
+    renderBrewingIndicators(document.getElementById('modifiedIndicators'), modifiedWater);
+    renderProfileComparison(modifiedWater);
+};
+
+// Profil cible sélectionné (ou null)
+const getSelectedProfile = () => {
+    const select = document.getElementById('targetProfile');
+    return select ? WATER_PROFILES[select.value] || null : null;
+};
+
+// Message du solveur (ions impossibles à atteindre par ajout)
+let solverNote = '';
+
+// Tableau de comparaison eau modifiée / profil cible (sécurisé contre XSS)
+const renderProfileComparison = (water) => {
+    const container = document.getElementById('profileTable');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const profile = getSelectedProfile();
+    if (!profile) {
+        const hint = document.createElement('p');
+        hint.className = 'text-sm text-slate-500';
+        hint.textContent = 'Choisissez un profil cible pour comparer votre eau et obtenir une suggestion d\'ajouts.';
+        container.appendChild(hint);
+        return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'w-full text-sm';
+    const head = document.createElement('tr');
+    head.className = 'text-left text-xs text-slate-400 uppercase tracking-wide';
+    ['Paramètre', 'Eau modifiée', `Cible ${profile.name}`, 'Écart'].forEach(text => {
+        const th = document.createElement('th');
+        th.className = 'pb-3 font-semibold';
+        th.textContent = text;
+        head.appendChild(th);
+    });
+    table.appendChild(head);
+
+    PROFILE_IONS.forEach(ion => {
+        const value = water[ion] || 0;
+        const target = profile.ions[ion];
+        const delta = value - target;
+        // Tolérance : 15 % de la cible, au moins 10 mg/L
+        const tolerance = Math.max(target * 0.15, 10);
+        const deltaColor = Math.abs(delta) <= tolerance ? 'text-emerald-400'
+            : Math.abs(delta) <= tolerance * 3 ? 'text-amber-400' : 'text-red-400';
+
+        const row = document.createElement('tr');
+        row.className = 'border-t border-slate-700/50';
+        [
+            { text: ion, className: 'py-2 text-slate-300' },
+            { text: `${formatValue(Math.round(value * 10) / 10)} mg/L`, className: 'py-2 text-white font-mono' },
+            { text: `${formatValue(target)} mg/L`, className: 'py-2 text-slate-400 font-mono' },
+            { text: `${delta > 0 ? '+' : ''}${formatValue(Math.round(delta * 10) / 10)}`, className: `py-2 font-mono ${deltaColor}` }
+        ].forEach(cell => {
+            const td = document.createElement('td');
+            td.className = cell.className;
+            td.textContent = cell.text;
+            row.appendChild(td);
+        });
+        table.appendChild(row);
+    });
+    container.appendChild(table);
+
+    if (solverNote) {
+        const note = document.createElement('p');
+        note.className = 'mt-4 text-xs text-amber-400';
+        note.textContent = solverNote;
+        container.appendChild(note);
+    }
+};
+
+// Remplir les champs avec les ajouts suggérés pour le profil sélectionné
+const applySuggestedAdditions = () => {
+    const profile = getSelectedProfile();
+    const liters = parseFloat(document.getElementById('waterQuantity').value);
+    if (!profile || !calculatorBaseWater || !(liters > 0)) return;
+
+    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters);
+    MINERAL_INPUT_IDS.forEach(id => {
+        document.getElementById(id).value = grams[id] || 0;
+    });
+
+    // Signaler les ions que les ajouts ne peuvent pas faire baisser
+    const result = calculateMineralAdditions(calculatorBaseWater, grams, liters);
+    const tooHigh = PROFILE_IONS.filter(ion => result[ion] > Math.max(profile.ions[ion] * 1.15, profile.ions[ion] + 10));
+    solverNote = tooHigh.length > 0
+        ? `Au-dessus de la cible : ${tooHigh.join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée.`
+        : '';
+
+    updateCalculations();
 };
 
 // Rafraîchir l'affichage complet du calculateur (eau de base + eau modifiée)
@@ -314,6 +513,31 @@ function initializeCalculator() {
             renderCalculator();
         }
     });
+
+    // Profils cibles
+    const profileSelect = document.getElementById('targetProfile');
+    const suggestButton = document.getElementById('suggestAdditions');
+    const profileDescription = document.getElementById('profileDescription');
+    if (profileSelect) {
+        Object.entries(WATER_PROFILES).forEach(([id, profile]) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = profile.name;
+            profileSelect.appendChild(option);
+        });
+        profileSelect.addEventListener('change', () => {
+            const profile = getSelectedProfile();
+            if (suggestButton) suggestButton.disabled = !profile;
+            if (profileDescription) {
+                profileDescription.textContent = profile ? `${profile.description} — valeurs indicatives.` : '';
+            }
+            solverNote = '';
+            updateCalculations();
+        });
+    }
+    if (suggestButton) {
+        suggestButton.addEventListener('click', applySuggestedAdditions);
+    }
 
     ['waterQuantity', ...MINERAL_INPUT_IDS].forEach(id => {
         const input = document.getElementById(id);
@@ -681,6 +905,11 @@ const displayNetworks = (networks) => {
             button.classList.remove('bg-slate-800/80', 'text-slate-300', 'border-slate-700');
             button.classList.add('bg-sky-600', 'text-white', 'border-sky-500', 'shadow-sky-500/20');
 
+            saveSelection({
+                dept: document.getElementById('departementSelect').value,
+                commune: document.getElementById('communeSelect').value,
+                reseau: network.code
+            });
             loadNetworkAnalyses(network.code);
         };
         const container = document.getElementById('networkButtons');
@@ -862,6 +1091,13 @@ const displayCurrentValues = (parameterGroups, labels, usedSources) => {
     });
 
     updateCalculator(currentValues);
+
+    // Indicateurs brassicoles de l'eau du réseau
+    const brewingIndicators = document.getElementById('brewingIndicators');
+    if (brewingIndicators) {
+        renderBrewingIndicators(brewingIndicators.querySelector('.grid'), currentValues);
+        brewingIndicators.classList.remove('hidden');
+    }
 };
 
 // Bandeau global indiquant les sources et la fraîcheur des données

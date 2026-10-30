@@ -58,8 +58,16 @@ Définis dans `PARAMETERS_OF_INTEREST` (app.js) : Ca, Mg, Na, SO4, Cl, K, pH, TA
 HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3()` depuis le TAC pour les autres prélèvements (source virtuelle `CALCULATED_SOURCE`).
 
 ### Calculateur de minéraux
-`MINERAL_CONVERSIONS` contient les pourcentages de conversion pour 7 sels (gypse, sel d'Epsom, etc.).
+`MINERAL_CONVERSIONS` contient les pourcentages de conversion pour 7 sels (gypse, sel d'Epsom, etc.), `ION_KEYS` fait le lien élément → paramètre.
 `calculateMineralAdditions()` calcule l'impact sur la composition de l'eau en mg/L.
+
+### Indicateurs et profils brassicoles
+- `calculateResidualAlkalinity()` (Kolbach, mg/L CaCO3), `calculateSulfateChlorideRatio()`, `calculateIonBalance()` (contrôle de cohérence cations/anions) : affichés pour l'eau du réseau (`#brewingIndicators`) et l'eau modifiée (`#modifiedIndicators`)
+- `WATER_PROFILES` : profils cibles indicatifs (villes historiques + styles modernes) ; les profils historiques sont souvent déséquilibrés ioniquement, c'est connu
+- `solveMineralAdditions()` : moindres carrés relatifs sous contrainte de positivité (descente par coordonnées) sur `SOLVER_SALTS` ; ne peut qu'ajouter des ions
+
+### Sélection partageable
+`saveSelection()` / `restoreSelection()` : `?dept=…&commune=…&reseau=…` dans l'URL (lien partageable) + dernière sélection en localStorage (`eau-brasseur:selection`).
 
 ## Stack technique
 
