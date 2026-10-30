@@ -297,3 +297,19 @@ test('jauges : échelle couvrant repère et mesures, position bornée', () => {
     assert.equal(w.gaugePosition(50, { min: 0, max: 10 }), 100);
     assert.equal(w.gaugePosition(1, { min: 0, max: 0 }), 0);
 });
+
+// --- Historique ---
+
+test('historique : filtrage par période depuis la dernière mesure, ordre chronologique', () => {
+    const analyses = [
+        analysis('1374', 20, '2026-08-01'),
+        analysis('1374', 10, '2024-01-01'),
+        analysis('1374', 15, '2025-12-01'),
+        analysis('1374', 5, '2020-03-01')
+    ];
+    assert.deepEqual(w.filterByPeriod(analyses, '1an').map(a => a.value), [15, 20]);
+    assert.deepEqual(w.filterByPeriod(analyses, '3ans').map(a => a.value), [10, 15, 20]);
+    assert.deepEqual(w.filterByPeriod(analyses, 'tout').map(a => a.value), [5, 10, 15, 20]);
+    assert.deepEqual(w.filterByPeriod([], '1an'), []);
+    assert.equal(analyses[0].value, 20, 'tableau source non trié en place');
+});

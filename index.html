@@ -356,8 +356,19 @@
 
             <!-- Onglet : historique -->
             <section id="panel-historique" role="tabpanel" aria-labelledby="tab-historique" tabindex="0" hidden>
-                <div id="charts">
-            <div id="chartsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-8"></div>
+                <div id="charts" class="glass-effect rounded-2xl p-4 md:p-8 shadow-2xl">
+                    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-4">
+                        <div id="historyParams" role="group" aria-label="Paramètre affiché" class="flex flex-wrap gap-2"></div>
+                        <div id="historyPeriods" role="group" aria-label="Période" class="flex gap-2 shrink-0"></div>
+                    </div>
+                    <p id="historySummary" class="text-sm text-slate-300 mb-4"></p>
+                    <div class="relative h-72 md:h-96">
+                        <canvas id="historyChart" role="img" aria-label="Évolution du paramètre sélectionné"></canvas>
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
+                        <span id="historyRangeLegend" class="inline-flex items-center gap-2"><span class="inline-block w-4 h-3 rounded-sm bg-emerald-500/30"></span>Repère brassage</span>
+                        <span id="historyComputedLegend" class="inline-flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full border-2 border-slate-300"></span>Valeur calculée depuis le TAC</span>
+                    </div>
                 </div>
             </section>
         </div>

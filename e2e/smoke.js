@@ -101,12 +101,27 @@ const step = async (name, fn) => {
             assert.match(page.url(), /onglet=calculateur/);
             await page.keyboard.press('ArrowRight');
             assert.ok(await page.isVisible('#panel-historique'));
-            await page.waitForSelector('#chartsGrid canvas');
             await page.keyboard.press('Home');
             assert.ok(await page.isVisible('#panel-eau'));
         });
 
-        await step('solveur : profil NEIPA → ajouts suggérés et tableau de comparaison', async () => {
+        await step('historique : un graphique, changement de paramètre et de période', async () => {
+            await page.click('#tab-historique');
+            assert.equal((await page.$$('#panel-historique canvas')).length, 1);
+            assert.match(await page.innerText('#historySummary'), /^Calcium : \d+ mesures/);
+            const countFor = async () => parseInt((await page.innerText('#historySummary')).match(/(\d+) mesure/)[1], 10);
+            const threeYears = await countFor();
+            await page.click('#historyPeriods button:has-text("Tout")');
+            assert.ok(await countFor() > threeYears, 'plus de mesures sur toute la période');
+            await page.click('#historyParams button:has-text("Bicarbonates")');
+            assert.equal(await page.getAttribute('#historyParams button:has-text("Bicarbonates")', 'aria-pressed'), 'true');
+            assert.match(await page.innerText('#historySummary'), /^Bicarbonates/);
+            assert.equal(await page.isVisible('#historyComputedLegend'), true);
+            await page.click('#historyParams button:has-text("pH")');
+            assert.equal(await page.isVisible('#historyComputedLegend'), false);
+        });
+
+                await step('solveur : profil NEIPA → ajouts suggérés et tableau de comparaison', async () => {
             await page.click('#tab-calculateur');
             await page.selectOption('#targetProfile', 'neipa');
             await page.click('#suggestAdditions');

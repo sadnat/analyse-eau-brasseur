@@ -50,9 +50,9 @@ En production : `https://eau.twibox.fr` (exposé par Traefik via le réseau Dock
 ### Frontend — Flux de données hybride (app.js)
 1. `chooseCommune()` / `applySelection()` (lien partagé, dernière visite, exemple)
 2. `loadAnalyses(communeCode)` → **Hub'Eau + SISE-Eaux en parallèle** → fusionne les réseaux
-4. `loadNetworkAnalyses(networkCode)` → **fusionne les deux sources** via `mergeAnalyses()` (dédoublonnage par `code_prelevement` + paramètre, SISE prioritaire) : historique long Hub'Eau + valeurs récentes SISE
-5. `displayAnalyses(analyses)` → cartes (dernière valeur, min/moy/max sur 12 mois, badge source/date par mesure) + graphiques
-6. `updateCalculator()` → calculateur de minéraux
+3. `loadNetworkAnalyses(networkCode)` → **fusionne les deux sources** via `mergeAnalyses()` (dédoublonnage par `code_prelevement` + paramètre, SISE prioritaire) : historique long Hub'Eau + valeurs récentes SISE
+4. `displayAnalyses(analyses)` → onglet « Mon eau » (synthèse, indicateurs, alertes, cartes) + historique
+5. `updateCalculator()` → calculateur de minéraux
 
 Le frontend vérifie la disponibilité du backend via `checkSiseBackend()` (`/api/sise/health`). Si le backend est indisponible, Hub'Eau est utilisé seul (graceful fallback).
 
@@ -91,6 +91,11 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 - Aide « ? » : `HELP_TEXTS` (water.js) via `createHelp()` ; icônes de statut explicites (`interpretation.icon`, `QUALITY_LEVEL_ICONS`), jamais déduites de la couleur
 - Ratio SO4/Cl « peu significatif » si sulfates et chlorures < `LOW_SULFATE_CHLORIDE` (20 mg/L)
 
+### Onglet « Historique »
+- Un seul graphique Chart.js (`historyChart`, mis à jour et non recréé) : pastilles de paramètre `#historyParams`, périodes `#historyPeriods` (`HISTORY_PERIODS`, `filterByPeriod()` dans water.js)
+- Lignes droites (`tension: 0`), axe Y depuis 0 (échelle fixe pour le pH), points calculés depuis le TAC en cercle vide
+- Repère brassage : plugin local `brewingRangePlugin` ; s'il est hors échelle, il est mentionné dans le résumé `#historySummary`
+
 ### Indicateurs et profils brassicoles
 - `calculateResidualAlkalinity()` (Kolbach, mg/L CaCO3), `calculateSulfateChlorideRatio()`, `calculateIonBalance()` (contrôle de cohérence cations/anions) : affichés pour l'eau du réseau (`#brewingIndicators`) et l'eau modifiée (`#modifiedIndicators`)
 - `WATER_PROFILES` : profils cibles indicatifs (villes historiques + styles modernes) ; les profils historiques sont souvent déséquilibrés ioniquement, c'est connu
@@ -118,6 +123,7 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 - Requêtes réseau avec `AbortSignal.timeout(FETCH_TIMEOUT_MS)` : une source lente ne doit pas bloquer l'autre
 - Toute classe Tailwind utilisée en JS doit apparaître en entier dans `app.js` ou `water.js` (fichiers scannés par Tailwind)
 - `debug()` est un no-op en production (activable avec `?debug=1`)
+- Masquer un élément portant une classe d'affichage Tailwind (`flex`, `inline-flex`…) : basculer la **classe** `hidden`, l'attribut `hidden` serait écrasé
 - Icônes Font Awesome : leur `display: inline-block` l'emporte sur la classe Tailwind `hidden` — pour masquer une icône selon la taille d'écran, l'envelopper dans un `<span class="hidden sm:inline">`
 - CSS custom dans `src/input.css` (palette "Deep Ocean", glass-effect). Les classes Tailwind dynamiques (couleurs des badges source) sont dans la `safelist` de `tailwind.config.js`
 - Le réseau Docker `traefik` doit exister (réseau externe partagé avec le reverse proxy)

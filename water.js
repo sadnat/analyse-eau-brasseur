@@ -465,6 +465,24 @@ const HELP_TEXTS = {
     chlore: 'Le chlore et les chloramines forment des chlorophénols (goût médicamenteux). Un comprimé de Campden (métabisulfite) pour ~75 L les neutralise en quelques minutes ; le chlore libre part aussi par dégazage une nuit, pas les chloramines.'
 };
 
+// Périodes de l'historique, comptées depuis la dernière mesure
+const HISTORY_PERIODS = {
+    '1an': { label: '1 an', months: 12 },
+    '3ans': { label: '3 ans', months: 36 },
+    'tout': { label: 'Tout', months: null }
+};
+
+// Mesures d'une période, en ordre chronologique (pour le graphique)
+const filterByPeriod = (analyses, period) => {
+    if (analyses.length === 0) return [];
+    const latest = analyses.reduce((max, a) => (a.date > max ? a.date : max), analyses[0].date);
+    const months = (HISTORY_PERIODS[period] || HISTORY_PERIODS.tout).months;
+    const since = months ? latest.minus({ months }) : null;
+    return analyses
+        .filter(a => !since || a.date >= since)
+        .sort((a, b) => a.date - b.date);
+};
+
 // Modes d'eau de base du calculateur
 const BASE_WATER_MODES = {
     derniere: 'Dernière mesure',
@@ -563,6 +581,8 @@ if (typeof module !== 'undefined') {
         summarizeWater,
         gaugeScale,
         gaugePosition,
-        HELP_TEXTS
+        HELP_TEXTS,
+        HISTORY_PERIODS,
+        filterByPeriod
     };
 }

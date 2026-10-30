@@ -276,6 +276,33 @@ body {
     outline-offset: 2px;
 }
 
+/* Boutons bascule (paramètre et période de l'historique) */
+.toggle-button {
+    padding: 0.35rem 0.8rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(71, 85, 105, 0.8);
+    background: rgba(30, 41, 59, 0.6);
+    color: #cbd5e1;
+    font-size: 0.85rem;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.toggle-button:hover {
+    border-color: var(--color-secondary);
+    color: #fff;
+}
+
+.toggle-button:focus-visible {
+    outline: 2px solid var(--color-secondary);
+    outline-offset: 2px;
+}
+
+.toggle-button[aria-pressed="true"] {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
 /* Pastille numérotée des étapes */
 .step-number {
     display: inline-flex;

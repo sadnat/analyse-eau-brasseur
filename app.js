@@ -317,9 +317,9 @@ const PARAMETER_COLORS = {
     'SULFATES (SO4)': { color: 'rgb(139, 92, 246)', background: 'rgba(139, 92, 246, 0.1)' }, // Violet
     'CHLORURES': { color: 'rgb(239, 68, 68)', background: 'rgba(239, 68, 68, 0.1)' }, // Rouge
     'POTASSIUM (K)': { color: 'rgb(236, 72, 153)', background: 'rgba(236, 72, 153, 0.1)' }, // Rose
-    'PH': { color: 'rgb(79, 70, 229)', background: 'rgba(79, 70, 229, 0.1)' }, // Indigo
-    'TAC': { color: 'rgb(107, 114, 128)', background: 'rgba(107, 114, 128, 0.1)' }, // Gris
-    'HCO3': { color: 'rgb(75, 85, 99)', background: 'rgba(75, 85, 99, 0.1)' } // Gris foncé
+    'PH': { color: 'rgb(129, 140, 248)', background: 'rgba(129, 140, 248, 0.1)' }, // Indigo clair
+    'TAC': { color: 'rgb(148, 163, 184)', background: 'rgba(148, 163, 184, 0.1)' }, // Gris clair
+    'HCO3': { color: 'rgb(45, 212, 191)', background: 'rgba(45, 212, 191, 0.1)' } // Turquoise
 };
 
 // Bouton d'aide « ? » et sa bulle (accessible au clavier, état dans aria-expanded)
@@ -1344,96 +1344,170 @@ const displayDataSourceBanner = (parameterGroups, usedSources) => {
     dataSourceInfo.classList.remove('hidden');
 };
 
-// Instances Chart.js affichées (détruites avant chaque nouveau rendu)
-let chartInstances = [];
+// --- Historique : un graphique, un paramètre et une période à la fois ---
+
+const historyState = { groups: null, labels: null, param: 'CALCIUM (CA)', period: '3ans' };
+let historyChart = null;
 
 // Couleurs des axes adaptées au thème sombre
 const CHART_TEXT_COLOR = 'rgb(148, 163, 184)'; // slate-400
-const CHART_TITLE_COLOR = 'rgb(226, 232, 240)'; // slate-200
 const CHART_GRID_COLOR = 'rgba(148, 163, 184, 0.12)';
 
-// Créer le graphique d'évolution d'un paramètre
-const createChart = (name, label, analyses) => {
-    const canvas = document.createElement('canvas');
-    const unit = PARAMETERS_OF_INTEREST[name].unit;
-    const color = PARAMETER_COLORS[name] || { color: 'rgb(59, 130, 246)', background: 'rgba(59, 130, 246, 0.1)' };
-
-    const data = analyses
-        .map(a => ({ x: a.date.toJSDate(), y: a.value }))
-        .sort((a, b) => a.x - b.x);
-
-    const axisTitle = (text) => ({ display: true, text, color: CHART_TEXT_COLOR, font: { weight: 'bold' } });
-
-    chartInstances.push(new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-            datasets: [{
-                label,
-                data,
-                borderColor: color.color,
-                backgroundColor: color.background,
-                borderWidth: 2,
-                tension: 0.3,
-                pointRadius: 4,
-                pointBackgroundColor: color.color,
-                pointBorderColor: 'white',
-                pointHoverRadius: 6,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: `${label} (${unit})`,
-                    color: CHART_TITLE_COLOR,
-                    font: { size: 16, weight: 'bold' },
-                    padding: 20
-                },
-                legend: { display: false }
-            },
-            scales: {
-                x: {
-                    type: 'time',
-                    // Unité choisie automatiquement selon la période couverte (mois ou années)
-                    adapters: { date: { locale: 'fr' } },
-                    time: { displayFormats: { month: 'MMM yyyy', quarter: 'MMM yyyy', year: 'yyyy' } },
-                    title: axisTitle('Date'),
-                    ticks: { color: CHART_TEXT_COLOR, maxRotation: 0, autoSkipPadding: 16 },
-                    grid: { color: CHART_GRID_COLOR }
-                },
-                y: {
-                    title: axisTitle(unit),
-                    ticks: { color: CHART_TEXT_COLOR },
-                    grid: { color: CHART_GRID_COLOR }
-                }
-            }
-        }
-    }));
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'bg-slate-800/40 p-6 rounded-2xl shadow-xl border border-slate-700/50 backdrop-blur-sm';
-    wrapper.style.height = '400px';
-    wrapper.appendChild(canvas);
-    return wrapper;
+// Plugin local : bande du repère brassage, limitée à la zone visible de l'axe Y
+const brewingRangePlugin = {
+    id: 'brewingRange',
+    beforeDatasetsDraw(chart, args, options) {
+        const range = options && options.range;
+        const y = chart.scales.y;
+        if (!range || range.min > y.max || range.max < y.min) return;
+        const top = y.getPixelForValue(Math.min(range.max, y.max));
+        const bottom = y.getPixelForValue(Math.max(range.min, y.min));
+        const { left, right } = chart.chartArea;
+        chart.ctx.save();
+        chart.ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+        chart.ctx.fillRect(left, top, right - left, bottom - top);
+        chart.ctx.restore();
+    }
 };
 
-// Affichage des graphiques
-const displayCharts = (parameterGroups, labels) => {
-    chartInstances.forEach(chart => chart.destroy());
-    chartInstances = [];
+// Bouton bascule (pastille de paramètre ou de période)
+const createToggle = (text, pressed, onClick) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toggle-button';
+    button.setAttribute('aria-pressed', String(pressed));
+    button.textContent = text;
+    button.addEventListener('click', onClick);
+    return button;
+};
 
-    const chartsGrid = document.getElementById('chartsGrid');
-    if (!chartsGrid) return;
-    chartsGrid.innerHTML = '';
+const renderHistoryControls = () => {
+    const params = document.getElementById('historyParams');
+    params.innerHTML = '';
+    Object.entries(historyState.groups)
+        .filter(([, analyses]) => analyses.length > 0)
+        .forEach(([name]) => {
+            params.appendChild(createToggle(PARAMETERS_OF_INTEREST[name].label, name === historyState.param, () => {
+                historyState.param = name;
+                renderHistoryControls();
+                renderHistoryChart();
+            }));
+        });
 
-    Object.entries(parameterGroups).forEach(([name, analyses]) => {
-        if (analyses.length === 0) return;
-        chartsGrid.appendChild(createChart(name, labels[name], analyses));
+    const periods = document.getElementById('historyPeriods');
+    periods.innerHTML = '';
+    Object.entries(HISTORY_PERIODS).forEach(([id, period]) => {
+        periods.appendChild(createToggle(period.label, id === historyState.period, () => {
+            historyState.period = id;
+            renderHistoryControls();
+            renderHistoryChart();
+        }));
     });
+};
 
+const renderHistoryChart = () => {
+    const name = historyState.param;
+    const info = PARAMETERS_OF_INTEREST[name];
+    const label = historyState.labels[name];
+    const points = filterByPeriod(historyState.groups[name] || [], historyState.period);
+    const color = (PARAMETER_COLORS[name] || PARAMETER_COLORS['CALCIUM (CA)']).color;
+    const fmt = (v) => formatValue(Math.round(v * 100) / 100);
+
+    // Résumé textuel (aussi utilisé comme description du graphique)
+    const values = points.map(p => p.value);
+    const summary = points.length === 0
+        ? `${label} : aucune mesure sur la période.`
+        : `${label} : ${points.length} mesure${points.length > 1 ? 's' : ''}, de ${fmt(Math.min(...values))} à ${fmt(Math.max(...values))} ${info.unit}.`;
+    const canvas = document.getElementById('historyChart');
+    // Classe (et non attribut) hidden : l'attribut serait écrasé par la classe inline-flex
+    document.getElementById('historyComputedLegend').classList.toggle('hidden', !points.some(p => p.source === CALCULATED_SOURCE));
+
+    // Repère brassage : bande dans le graphique, ou mention textuelle s'il est hors de l'échelle
+    const describeRange = (yMax) => {
+        const visible = info.range && points.length > 0 && info.range.min <= yMax;
+        document.getElementById('historyRangeLegend').classList.toggle('hidden', !visible);
+        const text = info.range && !visible && points.length > 0 && info.range.min > Math.max(...values)
+            ? `${summary} Repère brassage ${fmt(info.range.min)}–${fmt(info.range.max)} ${info.unit} : au-dessus des valeurs mesurées.`
+            : summary;
+        document.getElementById('historySummary').textContent = text;
+        canvas.setAttribute('aria-label', `Évolution — ${text}`);
+    };
+
+    const data = points.map(p => ({ x: p.date.toJSDate(), y: p.value, source: p.source.name, computed: p.source === CALCULATED_SOURCE }));
+    const dataset = {
+        label,
+        data,
+        borderColor: color,
+        borderWidth: 2,
+        tension: 0, // lignes droites : aucune valeur inventée entre deux mesures
+        pointRadius: data.length > 100 ? 2 : 3,
+        pointHoverRadius: 6,
+        pointBorderColor: color,
+        pointBackgroundColor: (ctx) => (ctx.raw && ctx.raw.computed ? 'rgba(15, 23, 42, 1)' : color),
+        fill: false
+    };
+    const yScale = info.scale
+        ? { min: info.scale.min, max: info.scale.max }
+        : { beginAtZero: true, min: undefined, max: undefined };
+
+    if (!historyChart) {
+        historyChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets: [dataset] },
+            plugins: [brewingRangePlugin],
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 300 },
+                interaction: { mode: 'nearest', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    brewingRange: { range: info.range || null },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => luxon.DateTime.fromJSDate(items[0].raw.x).setLocale('fr')
+                                .toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' }),
+                            label: (item) => `${formatValue(Math.round(item.raw.y * 100) / 100)} ${PARAMETERS_OF_INTEREST[historyState.param].unit} — ${item.raw.source}`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        adapters: { date: { locale: 'fr' } },
+                        time: { displayFormats: { month: 'MMM yyyy', quarter: 'MMM yyyy', year: 'yyyy' } },
+                        ticks: { color: CHART_TEXT_COLOR, maxRotation: 0, autoSkipPadding: 16 },
+                        grid: { color: CHART_GRID_COLOR }
+                    },
+                    y: {
+                        ...yScale,
+                        title: { display: true, text: info.unit, color: CHART_TEXT_COLOR },
+                        ticks: { color: CHART_TEXT_COLOR },
+                        grid: { color: CHART_GRID_COLOR }
+                    }
+                }
+            }
+        });
+    } else {
+        historyChart.data.datasets = [dataset];
+        historyChart.options.plugins.brewingRange.range = info.range || null;
+        Object.assign(historyChart.options.scales.y, yScale);
+        historyChart.options.scales.y.title.text = info.unit;
+        historyChart.update();
+    }
+    describeRange(historyChart.scales.y.max);
+};
+
+// Affichage de l'historique pour le réseau courant
+const displayCharts = (parameterGroups, labels) => {
+    historyState.groups = parameterGroups;
+    historyState.labels = labels;
+    if (!parameterGroups[historyState.param] || parameterGroups[historyState.param].length === 0) {
+        historyState.param = Object.keys(parameterGroups).find(name => parameterGroups[name].length > 0);
+    }
+    if (!historyState.param) return;
+    renderHistoryControls();
+    renderHistoryChart();
 };
 
 // Démarrer l'application
