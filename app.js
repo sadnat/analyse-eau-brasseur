@@ -322,20 +322,60 @@ const PARAMETER_COLORS = {
     'HCO3': { color: 'rgb(75, 85, 99)', background: 'rgba(75, 85, 99, 0.1)' } // Gris foncé
 };
 
-// Créer une tuile d'indicateur
-const createIndicatorTile = (title, value, interpretation) => {
+// Bouton d'aide « ? » et sa bulle (accessible au clavier, état dans aria-expanded)
+let helpCounter = 0;
+const createHelp = (helpKey) => {
+    const id = `help-${helpKey}-${++helpCounter}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'help-button';
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', id);
+    button.setAttribute('aria-label', 'Explication');
+    button.textContent = '?';
+    const bubble = document.createElement('p');
+    bubble.id = id;
+    bubble.hidden = true;
+    bubble.className = 'mt-3 text-xs leading-relaxed text-slate-300 border-l-2 border-sky-500/60 pl-3';
+    bubble.textContent = HELP_TEXTS[helpKey];
+    button.addEventListener('click', () => {
+        const open = button.getAttribute('aria-expanded') !== 'true';
+        button.setAttribute('aria-expanded', String(open));
+        bubble.hidden = !open;
+    });
+    return { button, bubble };
+};
+
+// Icônes des niveaux de qualité : le statut ne repose jamais sur la couleur seule
+const QUALITY_LEVEL_ICONS = { ok: 'fa-circle-check', vigilance: 'fa-triangle-exclamation', alerte: 'fa-circle-exclamation' };
+
+// Créer une tuile d'indicateur (titre, valeur, interprétation, aide optionnelle)
+const createIndicatorTile = (title, value, interpretation, helpKey = null) => {
     const tile = document.createElement('div');
     tile.className = 'p-4 rounded-xl bg-slate-800/40 border border-slate-700/50';
+    const header = document.createElement('div');
+    header.className = 'flex items-start justify-between gap-2 mb-2';
     const titleEl = document.createElement('p');
-    titleEl.className = 'text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2';
+    titleEl.className = 'text-xs font-semibold text-slate-300 uppercase tracking-wide';
     titleEl.textContent = title;
+    header.appendChild(titleEl);
+    const help = helpKey ? createHelp(helpKey) : null;
+    if (help) header.appendChild(help.button);
+
     const valueEl = document.createElement('p');
     valueEl.className = 'text-2xl font-bold text-white';
     valueEl.textContent = value;
     const hintEl = document.createElement('p');
-    hintEl.className = `text-xs mt-1 ${interpretation.color}`;
-    hintEl.textContent = interpretation.text;
-    tile.append(titleEl, valueEl, hintEl);
+    hintEl.className = `text-xs mt-1 flex items-start gap-1.5 ${interpretation.color}`;
+    const icon = document.createElement('i');
+    icon.className = `fas ${interpretation.icon || 'fa-circle-info'} mt-0.5`;
+    icon.setAttribute('aria-hidden', 'true');
+    const hintText = document.createElement('span');
+    hintText.textContent = interpretation.text;
+    hintEl.append(icon, hintText);
+
+    tile.append(header, valueEl, hintEl);
+    if (help) tile.appendChild(help.bubble);
     return tile;
 };
 
@@ -344,25 +384,36 @@ const renderBrewingIndicators = (container, water) => {
     if (!container) return;
     container.innerHTML = '';
 
+    const th = calculateTotalHardness(water);
+    container.appendChild(createIndicatorTile(
+        'Dureté totale',
+        `${formatValue(Math.round(th * 10) / 10)} °f`,
+        describeHardness(th),
+        'durete'
+    ));
+
     const ra = calculateResidualAlkalinity(water);
     container.appendChild(createIndicatorTile(
         'Alcalinité résiduelle',
-        `${formatValue(Math.round(ra))} mg/L CaCO₃ (${formatValue(Math.round(ra / 10 * 10) / 10)} °f)`,
-        describeResidualAlkalinity(ra)
+        `${formatValue(Math.round(ra))} mg/L CaCO₃`,
+        describeResidualAlkalinity(ra),
+        'alcalinite'
     ));
 
     const ratio = calculateSulfateChlorideRatio(water);
     container.appendChild(createIndicatorTile(
         'Ratio SO₄ / Cl',
         ratio === null ? '—' : formatValue(Math.round(ratio * 100) / 100),
-        describeSulfateChlorideRatio(ratio)
+        describeSulfateChlorideRatio(ratio, water),
+        'ratio'
     ));
 
     const balance = calculateIonBalance(water);
     container.appendChild(createIndicatorTile(
         'Balance ionique',
         balance ? `${formatValue(Math.round(balance.error * 10) / 10)} %` : '—',
-        describeIonBalance(balance)
+        describeIonBalance(balance),
+        'balance'
     ));
 };
 
@@ -437,7 +488,7 @@ const renderProfileComparison = (water) => {
     const profile = getSelectedProfile();
     if (!profile) {
         const hint = document.createElement('p');
-        hint.className = 'text-sm text-slate-500';
+        hint.className = 'text-sm text-slate-400';
         hint.textContent = 'Choisissez un profil cible pour comparer votre eau et obtenir une suggestion d\'ajouts.';
         container.appendChild(hint);
         return;
@@ -1029,85 +1080,170 @@ const displayQualityAlerts = (items) => {
         grid.appendChild(createIndicatorTile(
             `${item.title} — ${date}`,
             item.display,
-            { text: item.message, color: QUALITY_LEVEL_COLORS[item.level] }
+            { text: item.message, color: QUALITY_LEVEL_COLORS[item.level], icon: QUALITY_LEVEL_ICONS[item.level] },
+            item.title === 'Chlore' ? 'chlore' : null
         ));
     });
     section.classList.toggle('hidden', items.length === 0);
 };
 
-// Créer un badge source pour une carte paramètre
-const createSourceBadge = (source, date) => {
-    const badge = document.createElement('div');
-    const colorMap = { sky: 'sky', emerald: 'emerald', amber: 'amber' };
-    const c = colorMap[source.color] || 'sky';
-    badge.className = `mt-4 flex items-center gap-2 px-4 py-2 rounded-lg bg-${c}-500/10 border border-${c}-500/20`;
-
-    const sourceIcon = document.createElement('i');
-    sourceIcon.className = `${source.icon} text-${c}-500 text-xs`;
-    badge.appendChild(sourceIcon);
-
-    const text = document.createElement('span');
-    text.className = `text-xs text-${c}-400`;
-    const formattedDate = date.setLocale('fr').toLocaleString({ day: 'numeric', month: 'short', year: 'numeric' });
-    text.textContent = `${source.name} — ${formattedDate}`;
-    badge.appendChild(text);
-
-    return badge;
+// Mesures des 12 mois précédant la dernière (ordre chronologique)
+const lastYear = (analyses) => {
+    const since = analyses[0].date.minus({ months: 12 });
+    return analyses.filter(a => a.date >= since).slice().reverse();
 };
 
-// Créer la carte d'un paramètre : dernière valeur, statistiques 12 mois, source
-const createParameterCard = (name, label, analyses) => {
-    const lastAnalysis = analyses[0];
-    const isComputed = lastAnalysis.source === CALCULATED_SOURCE;
+// Mini-courbe SVG des 12 derniers mois
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const createSparkline = (points) => {
+    if (points.length < 2) return null;
+    const values = points.map(p => p.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const start = points[0].date.toMillis();
+    const span = points[points.length - 1].date.toMillis() - start || 1;
+    const coords = points.map(p => {
+        const x = (p.date.toMillis() - start) / span * 100;
+        const y = max === min ? 12 : 22 - (p.value - min) / (max - min) * 20;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(' ');
 
-    const card = document.createElement('div');
-    card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 100 24');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('class', 'hidden sm:block w-full h-8 text-sky-400 mt-3');
+    svg.setAttribute('aria-hidden', 'true');
+    const line = document.createElementNS(SVG_NS, 'polyline');
+    line.setAttribute('points', coords);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.appendChild(line);
+    return svg;
+};
 
-    // Header
-    const header = document.createElement('div');
-    header.className = 'flex justify-between items-start mb-4';
-    const h3 = document.createElement('h3');
-    h3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
-    h3.textContent = label;
-    const iconDiv = document.createElement('div');
-    iconDiv.className = `p-2 rounded-lg bg-slate-700/30 ${isComputed ? 'text-amber-500' : 'text-sky-500'}`;
-    const icon = document.createElement('i');
-    icon.className = isComputed ? 'fas fa-calculator' : 'fas fa-atom';
-    iconDiv.appendChild(icon);
-    header.appendChild(h3);
-    header.appendChild(iconDiv);
+// Jauge : repère brassage, étendue sur 12 mois et dernière valeur
+const createGauge = (name, analyses, stats) => {
+    const info = PARAMETERS_OF_INTEREST[name];
+    const last = analyses[0].value;
+    const scale = gaugeScale(name, [stats.min, stats.max, last]);
+    const fmt = (v) => formatValue(Math.round(v * 100) / 100);
 
-    // Valeur
-    const valueP = document.createElement('p');
-    valueP.className = 'text-3xl font-bold text-white mb-2';
-    valueP.textContent = formatValue(lastAnalysis.value) + ' ';
-    const unitSpan = document.createElement('span');
-    unitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
-    unitSpan.textContent = PARAMETERS_OF_INTEREST[name].unit;
-    valueP.appendChild(unitSpan);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mt-3';
+    const bar = document.createElement('div');
+    bar.className = 'relative h-2 rounded-full bg-slate-700/70';
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', `Dernière valeur ${fmt(last)} ${info.unit}`
+        + (stats.n > 1 ? `, de ${fmt(stats.min)} à ${fmt(stats.max)} sur 12 mois` : '')
+        + (info.range ? `, repère brassage ${fmt(info.range.min)} à ${fmt(info.range.max)}` : ''));
 
-    card.appendChild(header);
-    card.appendChild(valueP);
+    const segment = (from, to, className) => {
+        const el = document.createElement('div');
+        const left = gaugePosition(from, scale);
+        el.className = `absolute top-0 h-2 rounded-full ${className}`;
+        el.style.left = `${left}%`;
+        el.style.width = `${Math.max(gaugePosition(to, scale) - left, 1)}%`;
+        bar.appendChild(el);
+    };
+    if (info.range) segment(info.range.min, info.range.max, 'bg-emerald-500/30');
+    if (stats.n > 1) segment(stats.min, stats.max, 'bg-sky-400/60');
+    const marker = document.createElement('div');
+    marker.className = 'absolute -top-1 h-4 w-1 -ml-0.5 rounded-full bg-white shadow';
+    marker.style.left = `${gaugePosition(last, scale)}%`;
+    bar.appendChild(marker);
 
-    // Variabilité sur 12 mois (si plusieurs mesures)
-    const stats = computeYearStats(analyses);
+    const legend = document.createElement('p');
+    legend.className = 'mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1';
     if (stats.n > 1) {
-        const statsP = document.createElement('p');
-        statsP.className = 'text-xs text-slate-400';
-        statsP.textContent = `12 mois : min ${formatValue(stats.min)} · moy ${formatValue(stats.avg)} · max ${formatValue(stats.max)} (${stats.n} mesures)`;
-        card.appendChild(statsP);
+        const range12 = document.createElement('span');
+        range12.textContent = `12 mois : ${fmt(stats.min)} – ${fmt(stats.max)} (moy. ${fmt(stats.avg)})`;
+        legend.appendChild(range12);
+    }
+    if (info.range) {
+        const ref = document.createElement('span');
+        ref.className = 'inline-flex items-center gap-1';
+        const swatch = document.createElement('span');
+        swatch.className = 'inline-block w-3 h-2 rounded-sm bg-emerald-500/40';
+        const text = document.createElement('span');
+        text.textContent = `repère brassage ${fmt(info.range.min)}–${fmt(info.range.max)}`;
+        ref.append(swatch, text);
+        legend.appendChild(ref);
+    }
+    wrapper.append(bar, legend);
+    return wrapper;
+};
+
+// Créer la carte d'un paramètre : valeur, mini-courbe, jauge, source
+const createParameterCard = (name, label, analyses) => {
+    const info = PARAMETERS_OF_INTEREST[name];
+    const lastAnalysis = analyses[0];
+    const stats = computeYearStats(analyses);
+
+    const card = document.createElement('article');
+    card.className = 'p-5 rounded-2xl bg-slate-800/40 border border-slate-700/50';
+
+    const header = document.createElement('div');
+    header.className = 'flex items-baseline justify-between gap-2';
+    const h3 = document.createElement('h3');
+    h3.className = 'text-base font-semibold text-slate-200';
+    h3.textContent = label;
+    header.appendChild(h3);
+    if (info.symbol) {
+        const symbol = document.createElement('span');
+        symbol.className = 'text-sm text-slate-400 font-mono';
+        symbol.textContent = info.symbol;
+        header.appendChild(symbol);
     }
 
-    // Badge source + date
-    card.appendChild(createSourceBadge(lastAnalysis.source, lastAnalysis.date));
+    const valueP = document.createElement('p');
+    valueP.className = 'mt-2 text-3xl font-bold text-white';
+    valueP.textContent = formatValue(lastAnalysis.value) + ' ';
+    const unitSpan = document.createElement('span');
+    unitSpan.className = 'text-sm text-slate-400 font-normal';
+    unitSpan.textContent = info.unit;
+    valueP.appendChild(unitSpan);
+
+    card.append(header, valueP);
+    const sparkline = createSparkline(lastYear(analyses));
+    if (sparkline) card.appendChild(sparkline);
+    // Jauge utile s'il y a un repère, une échelle fixe ou une variation à montrer
+    if (info.range || info.scale || stats.n > 1) card.appendChild(createGauge(name, analyses, stats));
+
+    // Source et date, discrètes
+    const source = document.createElement('p');
+    source.className = 'mt-3 text-xs text-slate-400 flex items-center gap-1.5';
+    const icon = document.createElement('i');
+    icon.className = `${lastAnalysis.source.icon} text-slate-400`;
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    const date = lastAnalysis.date.setLocale('fr').toLocaleString({ day: 'numeric', month: 'short', year: 'numeric' });
+    text.textContent = `${lastAnalysis.source.name} · ${date}`;
+    source.append(icon, text);
+    card.appendChild(source);
 
     return card;
 };
 
+// Phrase de synthèse en tête de l'onglet « Mon eau »
+const displayWaterSummary = (water, qualityItems) => {
+    const container = document.getElementById('waterSummary');
+    if (!container) return;
+    const { headline, details } = summarizeWater(water, qualityItems);
+    container.innerHTML = '';
+    appendText(container, 'p', headline, 'text-lg md:text-xl font-semibold text-white');
+    if (details.length > 0) {
+        const list = document.createElement('ul');
+        list.className = 'mt-3 space-y-1 text-sm text-slate-300 list-disc pl-5';
+        details.forEach(detail => appendText(list, 'li', detail));
+        container.appendChild(list);
+    }
+};
+
 // Affichage des dernières valeurs
 const displayCurrentValues = (parameterGroups, labels, usedSources) => {
-    const container = document.getElementById('currentParameters');
-    const grid = container ? container.querySelector('.grid') : null;
+    const grid = document.getElementById('parameterCards');
     if (!grid) return;
     grid.innerHTML = '';
 
@@ -1129,6 +1265,7 @@ const displayCurrentValues = (parameterGroups, labels, usedSources) => {
     const brewingIndicators = document.getElementById('brewingIndicators');
     if (brewingIndicators) {
         renderBrewingIndicators(brewingIndicators.querySelector('.grid'), baseWaters.derniere);
+        displayWaterSummary(baseWaters.derniere, currentReport ? currentReport.qualityItems : []);
         brewingIndicators.classList.remove('hidden');
     }
 };
@@ -1194,7 +1331,7 @@ const displayDataSourceBanner = (parameterGroups, usedSources) => {
     // Ligne 3 : Note sur le décalage Hub'Eau (si SISE-Eaux n'a rien fourni)
     if (mainSource === DATA_SOURCES.HUBEAU) {
         const noteLine = document.createElement('div');
-        noteLine.className = 'flex items-center gap-3 ml-7 text-slate-500 text-xs';
+        noteLine.className = 'flex items-center gap-3 ml-7 text-slate-400 text-xs';
         const noteIcon = document.createElement('i');
         noteIcon.className = 'fas fa-clock flex-shrink-0';
         noteLine.appendChild(noteIcon);

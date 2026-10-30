@@ -252,6 +252,30 @@ body {
     color: #e0f2fe;
 }
 
+/* Bouton d'aide « ? » */
+.help-button {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(148, 163, 184, 0.6);
+    color: #cbd5e1;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.help-button:hover,
+.help-button[aria-expanded="true"] {
+    border-color: var(--color-secondary);
+    color: var(--color-secondary);
+}
+
+.help-button:focus-visible {
+    outline: 2px solid var(--color-secondary);
+    outline-offset: 2px;
+}
+
 /* Pastille numérotée des étapes */
 .step-number {
     display: inline-flex;

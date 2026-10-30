@@ -34,16 +34,18 @@ const DATA_SOURCES = {
 };
 
 // Paramètres d'intérêt pour la bière
+// label/symbol : affichage ; range : repère usuel en brassage (après ajouts éventuels), absent quand il dépend
+// du style ; scale : échelle fixe de la jauge (sinon calculée) ; target : plage du calculateur
 const PARAMETERS_OF_INTEREST = {
-    'CALCIUM (CA)': { code: '1374', unit: 'mg/L', target: { min: 50, max: 150 } },
-    'MAGNESIUM (MG)': { code: '1372', unit: 'mg/L', target: { min: 10, max: 30 } },
-    'SODIUM (NA)': { code: '1375', unit: 'mg/L', target: { min: 0, max: 150 } },
-    'SULFATES (SO4)': { code: '1338', unit: 'mg/L', target: { min: 50, max: 350 } },
-    'CHLORURES': { code: '1337', unit: 'mg/L', target: { min: 0, max: 250 } },
-    'POTASSIUM (K)': { code: '1367', unit: 'mg/L', target: { min: 0, max: 10 } },
-    'PH': { code: '1302', unit: 'unité pH', target: { min: 6.5, max: 9 } },
-    'TAC': { code: '1347', unit: '°f', target: { min: 0, max: 40 } },
-    'HCO3': { code: '1327', unit: 'mg/L', target: { min: 0, max: 400 } }
+    'CALCIUM (CA)': { code: '1374', unit: 'mg/L', label: 'Calcium', symbol: 'Ca²⁺', range: { min: 50, max: 150 }, target: { min: 50, max: 150 } },
+    'MAGNESIUM (MG)': { code: '1372', unit: 'mg/L', label: 'Magnésium', symbol: 'Mg²⁺', range: { min: 10, max: 30 }, target: { min: 10, max: 30 } },
+    'SODIUM (NA)': { code: '1375', unit: 'mg/L', label: 'Sodium', symbol: 'Na⁺', range: { min: 0, max: 100 }, target: { min: 0, max: 150 } },
+    'SULFATES (SO4)': { code: '1338', unit: 'mg/L', label: 'Sulfates', symbol: 'SO₄²⁻', range: { min: 50, max: 350 }, target: { min: 50, max: 350 } },
+    'CHLORURES': { code: '1337', unit: 'mg/L', label: 'Chlorures', symbol: 'Cl⁻', range: { min: 0, max: 150 }, target: { min: 0, max: 250 } },
+    'POTASSIUM (K)': { code: '1367', unit: 'mg/L', label: 'Potassium', symbol: 'K⁺', range: { min: 0, max: 10 }, target: { min: 0, max: 10 } },
+    'PH': { code: '1302', unit: 'unité pH', label: 'pH', symbol: '', scale: { min: 6, max: 9 }, target: { min: 6.5, max: 9 } },
+    'TAC': { code: '1347', unit: '°f', label: 'Alcalinité (TAC)', symbol: '', target: { min: 0, max: 40 } },
+    'HCO3': { code: '1327', unit: 'mg/L', label: 'Bicarbonates', symbol: 'HCO₃⁻', target: { min: 0, max: 400 } }
 };
 
 // Constantes pour les conversions de minéraux
@@ -155,8 +157,11 @@ const describeResidualAlkalinity = (ra) => {
     return { text: 'Adaptée aux bières brunes et stouts', color: 'text-orange-400' };
 };
 
-const describeSulfateChlorideRatio = (ratio) => {
+const describeSulfateChlorideRatio = (ratio, water = null) => {
     if (ratio === null) return { text: 'Chlorures non mesurés', color: 'text-slate-400' };
+    if (water && (water['SULFATES (SO4)'] || 0) < LOW_SULFATE_CHLORIDE && (water['CHLORURES'] || 0) < LOW_SULFATE_CHLORIDE) {
+        return { text: 'Peu significatif : sulfates et chlorures faibles', color: 'text-slate-400', icon: 'fa-circle-minus' };
+    }
     if (ratio < 0.5) return { text: 'Très malté', color: 'text-amber-400' };
     if (ratio < 0.8) return { text: 'Malté', color: 'text-amber-400' };
     if (ratio <= 1.5) return { text: 'Équilibré', color: 'text-emerald-400' };
@@ -165,10 +170,10 @@ const describeSulfateChlorideRatio = (ratio) => {
 };
 
 const describeIonBalance = (balance) => {
-    if (!balance) return { text: 'Données insuffisantes', color: 'text-slate-400' };
-    if (balance.error <= 5) return { text: 'Analyse cohérente', color: 'text-emerald-400' };
-    if (balance.error <= 10) return { text: 'Écart acceptable', color: 'text-amber-400' };
-    return { text: 'Analyse incomplète (mesures de dates différentes ?)', color: 'text-red-400' };
+    if (!balance) return { text: 'Données insuffisantes', color: 'text-slate-400', icon: 'fa-circle-minus' };
+    if (balance.error <= 5) return { text: 'Analyse cohérente', color: 'text-emerald-400', icon: 'fa-circle-check' };
+    if (balance.error <= 10) return { text: 'Écart acceptable', color: 'text-amber-400', icon: 'fa-triangle-exclamation' };
+    return { text: 'Analyse incomplète (mesures de dates différentes ?)', color: 'text-red-400', icon: 'fa-circle-exclamation' };
 };
 
 // Solveur : quantités de sels (g) pour approcher un profil cible.
@@ -291,9 +296,9 @@ const buildParameterGroups = (analyses) => {
 
     // Libellé affiché pour chaque paramètre
     const labels = {};
-    Object.keys(PARAMETERS_OF_INTEREST).forEach(name => { labels[name] = name; });
+    Object.entries(PARAMETERS_OF_INTEREST).forEach(([name, info]) => { labels[name] = info.label; });
     if (computedHco3.length > 0) {
-        labels['HCO3'] = measuredHco3Days.size > 0 ? 'HCO3 (mesuré + calculé)' : 'HCO3 (calculé)';
+        labels['HCO3'] = measuredHco3Days.size > 0 ? 'Bicarbonates (mesurés + calculés)' : 'Bicarbonates (calculés)';
     }
 
     return { parameterGroups, labels };
@@ -387,6 +392,79 @@ const assessWaterQuality = (qualityGroups) => {
     return items;
 };
 
+// Dureté totale (TH) en °f : (Ca × 2,497 + Mg × 4,118) mg/L CaCO3 / 10
+const calculateTotalHardness = (water) =>
+    ((water['CALCIUM (CA)'] || 0) * 2.497 + (water['MAGNESIUM (MG)'] || 0) * 4.118) / 10;
+
+// Classes de dureté usuelles en France (°f)
+const describeHardness = (th) => {
+    if (th < 7) return { text: 'Très douce', color: 'text-sky-400' };
+    if (th < 15) return { text: 'Douce', color: 'text-sky-400' };
+    if (th < 30) return { text: 'Moyennement dure', color: 'text-amber-400' };
+    if (th < 40) return { text: 'Dure', color: 'text-orange-400' };
+    return { text: 'Très dure', color: 'text-orange-400' };
+};
+
+// En dessous de ce seuil (mg/L), sulfates et chlorures sont trop faibles pour orienter le goût
+const LOW_SULFATE_CHLORIDE = 20;
+
+// Synthèse en langage courant : une phrase principale et des précisions
+const summarizeWater = (water, qualityItems = []) => {
+    const th = calculateTotalHardness(water);
+    const ra = calculateResidualAlkalinity(water);
+    const hardness = describeHardness(th).text.toLowerCase();
+    const headline = `Eau ${hardness} (dureté ${formatValue(Math.round(th * 10) / 10)} °f)`
+        + (ra <= 0 ? ', idéale telle quelle pour les bières pâles.'
+            : ra <= 60 ? ', adaptée aux bières ambrées.'
+                : ', adaptée aux bières brunes et aux stouts.');
+
+    const details = [];
+    if (th < 15) {
+        details.push('Peu minéralisée : une bonne base pour construire n\'importe quel profil avec des sels.');
+    }
+    if (ra > 0) {
+        details.push('Pour une bière pâle, acidifiez la maische ou diluez avec de l\'eau osmosée.');
+    }
+    const sulfate = water['SULFATES (SO4)'] || 0;
+    const chloride = water['CHLORURES'] || 0;
+    if (sulfate >= LOW_SULFATE_CHLORIDE || chloride >= LOW_SULFATE_CHLORIDE) {
+        const ratio = calculateSulfateChlorideRatio(water);
+        if (ratio !== null) details.push(`Ratio sulfates/chlorures : profil ${describeSulfateChlorideRatio(ratio).text.toLowerCase()}.`);
+    }
+    // Action prioritaire : alerte d'abord, puis vigilance
+    const priority = qualityItems.find(i => i.level === 'alerte') || qualityItems.find(i => i.level === 'vigilance');
+    if (priority) {
+        details.push(priority.title === 'Chlore'
+            ? 'Chlore présent : traitez l\'eau au Campden avant de brasser.'
+            : `${priority.title} : ${priority.message}`);
+    }
+    return { headline, details };
+};
+
+// Échelle de la jauge d'un paramètre : couvre le repère brassage, l'étendue sur 12 mois et la dernière valeur
+const gaugeScale = (name, values) => {
+    const info = PARAMETERS_OF_INTEREST[name];
+    if (info.scale) return info.scale;
+    const highest = Math.max(...values, info.range ? info.range.max : 0);
+    return { min: 0, max: highest * 1.15 || 1 };
+};
+
+// Position (en %) d'une valeur sur une échelle, bornée à [0, 100]
+const gaugePosition = (value, scale) => {
+    const span = scale.max - scale.min;
+    if (!(span > 0)) return 0;
+    return Math.min(100, Math.max(0, (value - scale.min) / span * 100));
+};
+
+// Textes d'aide (bulles « ? »)
+const HELP_TEXTS = {
+    durete: 'Somme du calcium et du magnésium, en degrés français (°f). Une eau douce se corrige facilement par ajout de sels ; une eau dure se dilue à l\'eau osmosée.',
+    alcalinite: 'Capacité de l\'eau à faire remonter le pH de la maische, une fois compensée par le calcium et le magnésium. Négative ou nulle : bières pâles. Élevée : bières foncées, dont les malts torréfiés acidifient la maische.',
+    ratio: 'Rapport sulfates / chlorures. Les sulfates accentuent l\'amertume sèche, les chlorures la rondeur maltée. Peu significatif quand les deux sont faibles (moins de 20 mg/L).',
+    balance: 'Écart entre cations et anions mesurés. Un écart important signale des mesures prises à des dates différentes ou un ion non mesuré : interprétez les valeurs avec prudence.',
+    chlore: 'Le chlore et les chloramines forment des chlorophénols (goût médicamenteux). Un comprimé de Campden (métabisulfite) pour ~75 L les neutralise en quelques minutes ; le chlore libre part aussi par dégazage une nuit, pas les chloramines.'
+};
+
 // Modes d'eau de base du calculateur
 const BASE_WATER_MODES = {
     derniere: 'Dernière mesure',
@@ -478,6 +556,13 @@ if (typeof module !== 'undefined') {
         BASE_WATER_MODES,
         buildBaseWaters,
         escapeXml,
-        toBeerXmlWaters
+        toBeerXmlWaters,
+        calculateTotalHardness,
+        describeHardness,
+        LOW_SULFATE_CHLORIDE,
+        summarizeWater,
+        gaugeScale,
+        gaugePosition,
+        HELP_TEXTS
     };
 }

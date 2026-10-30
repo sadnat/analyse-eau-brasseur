@@ -140,27 +140,34 @@
             <!-- Onglet : mon eau -->
             <section id="panel-eau" role="tabpanel" aria-labelledby="tab-eau" tabindex="0">
                 <div id="currentParameters" class="glass-effect rounded-2xl p-4 md:p-8 shadow-2xl">
+                    <!-- Synthèse en langage courant -->
+                    <div id="waterSummary" class="mb-6"></div>
+
                     <div id="dataSourceInfo" class="hidden mb-6 p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 text-sm text-slate-400">
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    </div>
 
                     <!-- Indicateurs brassicoles (alcalinité résiduelle, ratio SO4/Cl, balance ionique) -->
                     <div id="brewingIndicators" class="hidden mt-10">
                         <h3 class="text-lg font-semibold text-slate-300 mb-4 flex items-center gap-2">
                             <i class="fas fa-beer text-amber-500" aria-hidden="true"></i> Indicateurs brassicoles
                         </h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
+                        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4"></div>
                     </div>
 
                     <!-- Alertes qualité (chlore, nitrates, fer, manganèse) -->
                     <div id="qualityAlerts" class="hidden mt-10">
                         <h3 class="text-lg font-semibold text-slate-300 mb-4 flex items-center gap-2">
-                            <i class="fas fa-shield-halved text-sky-500" aria-hidden="true"></i> Qualité de l'eau pour le brassage
+                            <i class="fas fa-shield-alt text-sky-500" aria-hidden="true"></i> Qualité de l'eau pour le brassage
                         </h3>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
                     </div>
+
+                    <!-- Détail des mesures (cartes par paramètre) -->
+                    <h3 class="mt-10 mb-4 text-lg font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fas fa-flask text-sky-500" aria-hidden="true"></i> Détail des mesures
+                    </h3>
+                    <div id="parameterCards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6"></div>
                 </div>
             </section>
 
@@ -181,7 +188,7 @@
                         <i class="fas fa-chevron-down text-xs"></i>
                     </div>
                 </div>
-                <p class="mt-3 text-xs text-slate-500">La composition du réseau varie au fil de l'année : le maximum donne une marge de sécurité.</p>
+                <p class="mt-3 text-xs text-slate-400">La composition du réseau varie au fil de l'année : le maximum donne une marge de sécurité.</p>
             </div>
 
             <!-- Quantité d'eau -->
@@ -214,7 +221,7 @@
                         <i class="fas fa-wand-magic-sparkles mr-2"></i>Suggérer les ajouts
                     </button>
                 </div>
-                <p id="profileDescription" class="mt-3 text-xs text-slate-500"></p>
+                <p id="profileDescription" class="mt-3 text-xs text-slate-400"></p>
             </div>
 
             <!-- Ajout de minéraux -->
@@ -228,7 +235,7 @@
                                 class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                                 value="0" min="0" step="0.1">
                             <span
-                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                         </div>
                     </div>
                 </div>
@@ -241,7 +248,7 @@
                                 class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                                 value="0" min="0" step="0.1">
                             <span
-                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                                class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                         </div>
                     </div>
                 </div>
@@ -253,7 +260,7 @@
                             class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                             value="0" min="0" step="0.1">
                         <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                     </div>
                 </div>
                 <div>
@@ -264,7 +271,7 @@
                             class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                             value="0" min="0" step="0.1">
                         <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                     </div>
                 </div>
                 <div>
@@ -275,7 +282,7 @@
                             class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                             value="0" min="0" step="0.1">
                         <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                     </div>
                 </div>
                 <div>
@@ -286,7 +293,7 @@
                             class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                             value="0" min="0" step="0.1">
                         <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                     </div>
                 </div>
                 <div>
@@ -297,7 +304,7 @@
                             class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                             value="0" min="0" step="0.1">
                         <span
-                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
+                            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 font-medium group-focus-within:text-sky-500 transition-colors">g</span>
                     </div>
                 </div>
             </div>
@@ -328,7 +335,7 @@
                 <h3 class="text-lg font-bold text-slate-300 mb-4 flex items-center gap-2">
                     <i class="fas fa-bullseye text-amber-500"></i> Eau modifiée : indicateurs
                 </h3>
-                <div id="modifiedIndicators" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"></div>
+                <div id="modifiedIndicators" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"></div>
                 <div id="profileTable"></div>
             </div>
 
@@ -343,7 +350,7 @@
                     <i class="fas fa-print mr-2"></i>Imprimer la fiche de brassage
                 </button>
             </div>
-            <p class="mt-3 text-xs text-slate-500 md:text-right">Format BeerXML : BeerSmith, Brewer's Friend et autres logiciels compatibles.</p>
+            <p class="mt-3 text-xs text-slate-400 md:text-right">Format BeerXML : BeerSmith, Brewer's Friend et autres logiciels compatibles.</p>
                 </div>
             </section>
 

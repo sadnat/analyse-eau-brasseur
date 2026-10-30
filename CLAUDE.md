@@ -84,6 +84,13 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 `MINERAL_CONVERSIONS` contient les pourcentages de conversion pour 7 sels (gypse, sel d'Epsom, etc.), `ION_KEYS` fait le lien élément → paramètre.
 `calculateMineralAdditions()` calcule l'impact sur la composition de l'eau en mg/L.
 
+### Onglet « Mon eau » (lisibilité)
+- Ordre : synthèse `#waterSummary` (`summarizeWater()`), sources, indicateurs, alertes qualité, puis détail `#parameterCards`
+- `PARAMETERS_OF_INTEREST` : `label`/`symbol` pour l'affichage (les clés `'CALCIUM (CA)'`… restent les identifiants internes), `range` = repère brassage de la jauge (absent pour pH, TAC, HCO3 : dépend du style), `scale` = échelle fixe (pH)
+- Cartes : jauge (`gaugeScale()`/`gaugePosition()`) avec repère, étendue 12 mois et dernière valeur ; mini-courbe SVG masquée sur mobile
+- Aide « ? » : `HELP_TEXTS` (water.js) via `createHelp()` ; icônes de statut explicites (`interpretation.icon`, `QUALITY_LEVEL_ICONS`), jamais déduites de la couleur
+- Ratio SO4/Cl « peu significatif » si sulfates et chlorures < `LOW_SULFATE_CHLORIDE` (20 mg/L)
+
 ### Indicateurs et profils brassicoles
 - `calculateResidualAlkalinity()` (Kolbach, mg/L CaCO3), `calculateSulfateChlorideRatio()`, `calculateIonBalance()` (contrôle de cohérence cations/anions) : affichés pour l'eau du réseau (`#brewingIndicators`) et l'eau modifiée (`#modifiedIndicators`)
 - `WATER_PROFILES` : profils cibles indicatifs (villes historiques + styles modernes) ; les profils historiques sont souvent déséquilibrés ioniquement, c'est connu

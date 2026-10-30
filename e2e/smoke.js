@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const BASE_URL = process.env.E2E_BASE_URL || 'http://eau-app/';
 // Foix (09) : quatre réseaux, données Hub'Eau depuis 2016 et SISE-Eaux récentes
 const FOIX = '?dept=09&commune=09122';
-const CARDS = '#results:not(.hidden) #currentParameters > .grid > div';
+const CARDS = '#results:not(.hidden) #parameterCards > article';
 const PRESSED = '#networkButtons button[aria-pressed="true"]';
 
 const steps = [];
@@ -28,7 +28,7 @@ const step = async (name, fn) => {
         page.on('pageerror', e => problems.push(`[pageerror] ${e.message}`));
         return page;
     };
-    const firstCardText = (page) => page.$eval('#currentParameters > .grid > div', d => d.innerText.replace(/\s+/g, ' '));
+    const firstCardText = (page) => page.$eval('#parameterCards > article', d => d.innerText.replace(/\s+/g, ' '));
 
     try {
         const page = await newPage({ viewport: { width: 1280, height: 900 } });
@@ -81,7 +81,11 @@ const step = async (name, fn) => {
 
         await step('cartes, indicateurs, alertes qualité et graphiques', async () => {
             await page.waitForSelector('#qualityAlerts:not(.hidden)');
-            assert.ok((await page.$$('#currentParameters > .grid > div')).length >= 6);
+            assert.ok((await page.$$('#parameterCards > article')).length >= 6);
+            assert.match(await page.innerText('#waterSummary'), /^Eau très douce/);
+            await page.click('#brewingIndicators .help-button');
+            assert.equal(await page.getAttribute('#brewingIndicators .help-button', 'aria-expanded'), 'true');
+            assert.match(await page.innerText('#brewingIndicators'), /degrés français/);
             assert.match(await page.innerText('#brewingIndicators'), /ALCALINITÉ RÉSIDUELLE/i);
             assert.match(await page.innerText('#qualityAlerts'), /Campden/);
             assert.match(await page.innerText('#dataSourceInfo'), /Sources : /);

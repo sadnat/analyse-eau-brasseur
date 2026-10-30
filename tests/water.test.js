@@ -149,12 +149,12 @@ test('HCO3 : mesuré complété par le calcul TAC les jours sans mesure', () => 
     assert.equal(hco3[0].value, 244); // 20 °f calculé, le plus récent en premier
     assert.equal(hco3[0].source, w.CALCULATED_SOURCE);
     assert.equal(hco3[1].value, 100); // mesuré, prioritaire sur le calcul du même jour
-    assert.equal(labels['HCO3'], 'HCO3 (mesuré + calculé)');
+    assert.equal(labels['HCO3'], 'Bicarbonates (mesurés + calculés)');
 });
 
 test('HCO3 : uniquement calculé si jamais mesuré', () => {
     const { labels } = w.buildParameterGroups([analysis('1347', 10, '2026-01-01')]);
-    assert.equal(labels['HCO3'], 'HCO3 (calculé)');
+    assert.equal(labels['HCO3'], 'Bicarbonates (calculés)');
 });
 
 test('statistiques : seules les mesures des 12 mois précédant la dernière comptent', () => {
@@ -254,4 +254,46 @@ test('BeerXML : champs en ppm, texte échappé, pH optionnel', () => {
     const opened = xml.match(/<([A-Z]+)>/g).length;
     const closed = xml.match(/<\/([A-Z]+)>/g).length;
     assert.equal(opened, closed);
+});
+
+// --- Lisibilité : dureté, synthèse, jauges ---
+
+test('dureté totale : Ca 100 + Mg 10 mg/L ≈ 29 °f, classes usuelles', () => {
+    approx(w.calculateTotalHardness({ 'CALCIUM (CA)': 100, 'MAGNESIUM (MG)': 10 }), 29.1, 0.1);
+    assert.equal(w.describeHardness(3).text, 'Très douce');
+    assert.equal(w.describeHardness(20).text, 'Moyennement dure');
+    assert.equal(w.describeHardness(45).text, 'Très dure');
+});
+
+test('ratio SO4/Cl peu significatif quand sulfates et chlorures sont faibles', () => {
+    const soft = { 'SULFATES (SO4)': 3.5, 'CHLORURES': 1.8 };
+    assert.match(w.describeSulfateChlorideRatio(1.94, soft).text, /Peu significatif/);
+    assert.equal(w.describeSulfateChlorideRatio(2, { 'SULFATES (SO4)': 200, 'CHLORURES': 100 }).text, 'Houblonné');
+});
+
+test('synthèse : eau douce chlorée (Foix)', () => {
+    const quality = w.assessWaterQuality(qualityGroups([['1398', 0.1], ['1399', 0.15]]));
+    const { headline, details } = w.summarizeWater(SOFT_WATER, quality);
+    assert.match(headline, /^Eau très douce \(dureté 3 °f\), adaptée aux bières ambrées\.$/);
+    assert.ok(details.some(d => /bonne base/.test(d)));
+    assert.ok(details.some(d => /Campden/.test(d)));
+    assert.ok(!details.some(d => /Ratio/.test(d)), 'ratio non significatif omis');
+});
+
+test('synthèse : eau dure carbonatée (Dublin)', () => {
+    const { headline, details } = w.summarizeWater(w.WATER_PROFILES.dublin.ions);
+    assert.match(headline, /^Eau dure .*brunes et aux stouts\.$/);
+    assert.ok(details.some(d => /acidifiez/.test(d)));
+    assert.ok(details.some(d => /Ratio sulfates\/chlorures : profil houblonné/.test(d)));
+});
+
+test('jauges : échelle couvrant repère et mesures, position bornée', () => {
+    const scale = w.gaugeScale('CALCIUM (CA)', [7, 33]);
+    assert.equal(scale.min, 0);
+    approx(scale.max, 150 * 1.15, 0.01); // le repère brassage (150) domine
+    assert.deepEqual(w.gaugeScale('PH', [7.6]), { min: 6, max: 9 });
+    assert.equal(w.gaugePosition(7.5, { min: 6, max: 9 }), 50);
+    assert.equal(w.gaugePosition(-5, { min: 0, max: 10 }), 0);
+    assert.equal(w.gaugePosition(50, { min: 0, max: 10 }), 100);
+    assert.equal(w.gaugePosition(1, { min: 0, max: 0 }), 0);
 });
