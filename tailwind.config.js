@@ -4,6 +4,16 @@ module.exports = {
     './index.html',
     './app.js',
   ],
+  safelist: [
+    // Classes dynamiques utilisées dans les badges source (app.js)
+    {
+      pattern: /(bg|border|text)-(sky|emerald|amber|red)-(400|500)/,
+      variants: [],
+    },
+    {
+      pattern: /(bg|border)-(sky|emerald|amber|red)-500\/(5|10|20)/,
+    },
+  ],
   theme: {
     extend: {
       colors: {

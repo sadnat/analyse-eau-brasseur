@@ -3,9 +3,43 @@ services:
     build: .
     container_name: eau-app
     restart: unless-stopped
+    depends_on:
+      - backend
     networks:
-      - npm_default
+      - traefik
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.eau.rule=Host(`eau.twibox.fr`)
+      - traefik.http.routers.eau.entrypoints=websecure
+      - traefik.http.routers.eau.tls.certresolver=cloudflare
+      - traefik.http.services.eau.loadbalancer.server.port=80
+      - traefik.docker.network=traefik
+
+  # Backend joignable uniquement par nginx (réseau privé, accès Internet conservé pour la sync)
+  backend:
+    build: ./backend
+    container_name: eau-backend
+    restart: unless-stopped
+    volumes:
+      - sise-data:/app/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/sise/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  sise-data:
 
 networks:
-  npm_default:
+  traefik:
     external: true
+  backend:

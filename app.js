@@ -1,7 +1,7 @@
-// Fonction de debug désactivée en production pour éviter la fuite d'informations
+// Fonction de debug — no-op en production, activable via ?debug=1
+const DEBUG_ENABLED = new URLSearchParams(window.location.search).has('debug');
 function debug(message) {
-    // No-op en production. Décommenter la ligne suivante pour le développement :
-    // console.log(message);
+    if (DEBUG_ENABLED) console.log(message);
 }
 
 // Fonction pour attendre que le DOM soit prêt
@@ -98,6 +98,26 @@ function initApp() {
     });
 }
 
+// Sources de données
+const DATA_SOURCES = {
+    HUBEAU: {
+        id: 'hubeau',
+        name: 'Hub\'Eau',
+        fullName: 'Hub\'Eau (eaufrance.fr)',
+        description: 'API publique du BRGM — rediffusion mensuelle des données SISE-Eaux',
+        icon: 'fas fa-water',
+        color: 'sky'
+    },
+    SISE_EAUX: {
+        id: 'sise-eaux',
+        name: 'SISE-Eaux',
+        fullName: 'SISE-Eaux (data.gouv.fr)',
+        description: 'Base du Ministère de la Santé — données M+1, plus récentes',
+        icon: 'fas fa-database',
+        color: 'emerald'
+    }
+};
+
 // Paramètres d'intérêt pour la bière
 const PARAMETERS_OF_INTEREST = {
     'CALCIUM (CA)': { code: '1374', unit: 'mg/L', target: { min: 50, max: 150 } },
@@ -106,9 +126,9 @@ const PARAMETERS_OF_INTEREST = {
     'SULFATES (SO4)': { code: '1338', unit: 'mg/L', target: { min: 50, max: 350 } },
     'CHLORURES': { code: '1337', unit: 'mg/L', target: { min: 0, max: 250 } },
     'POTASSIUM (K)': { code: '1367', unit: 'mg/L', target: { min: 0, max: 10 } },
-    'PH': { code: '1302', unit: 'unité pH', target: { min: 5.2, max: 8.8 } },
-    'TAC': { code: '1347', unit: '°f', target: { min: 0, max: 400 } },
-    'HCO3': { code: 'HCO3', unit: 'mg/L', target: { min: 0, max: 400 } }
+    'PH': { code: '1302', unit: 'unité pH', target: { min: 6.5, max: 9 } },
+    'TAC': { code: '1347', unit: '°f', target: { min: 0, max: 40 } },
+    'HCO3': { code: '1327', unit: 'mg/L', target: { min: 0, max: 400 } }
 };
 
 // Couleurs pour les différents paramètres
@@ -134,9 +154,9 @@ const MINERAL_CONVERSIONS = {
         mg: 0.0986, // 9.86% de magnésium
         so4: 0.3900 // 39.00% de sulfate
     },
-    calciumChloride: { // CaCl2·2H2O (77%)
-        ca: 0.2772, // 27.72% de calcium
-        cl: 0.4925  // 49.25% de chlorure
+    calciumChloride: { // CaCl2·2H2O
+        ca: 0.2726, // 27.26% de calcium
+        cl: 0.4823  // 48.23% de chlorure
     },
     sodiumChloride: { // NaCl (Sel de table)
         na: 0.3934, // 39.34% de sodium
@@ -144,7 +164,7 @@ const MINERAL_CONVERSIONS = {
     },
     calciumCarbonate: { // CaCO3 (Craie)
         ca: 0.4004, // 40.04% de calcium
-        hco3: 0.9756 // Conversion en équivalent HCO3
+        hco3: 1.2193 // 2 HCO3 par CaCO3 (dissolution avec CO2) — la craie est peu soluble dans l'eau
     },
     sodiumBicarbonate: { // NaHCO3 (Bicarbonate de soude)
         na: 0.2736, // 27.36% de sodium
@@ -160,6 +180,7 @@ const MINERAL_CONVERSIONS = {
 function calculateMineralAdditions(baseWater, additions, waterQuantity) {
     const result = { ...baseWater };
     const liters = parseFloat(waterQuantity);
+    if (!(liters > 0)) return result;
 
     // Fonction pour ajouter un minéral aux résultats
     const addMineral = (amount, mineral, conversions) => {
@@ -217,118 +238,103 @@ function calculateMineralAdditions(baseWater, additions, waterQuantity) {
     return result;
 }
 
-// Fonction pour mettre à jour l'affichage du calculateur
-function updateCalculator(baseWater) {
+// Eau de base courante du calculateur (mise à jour à chaque sélection de réseau)
+let calculatorBaseWater = null;
+let calculatorInitialized = false;
+
+// IDs des inputs de minéraux du calculateur
+const MINERAL_INPUT_IDS = [
+    'calciumSulfate',
+    'magnesiumSulfate',
+    'calciumChloride',
+    'sodiumChloride',
+    'calciumCarbonate',
+    'sodiumBicarbonate',
+    'potassiumChloride'
+];
+
+// Créer l'affichage d'une valeur avec indicateur de plage (sécurisé contre XSS)
+const createParameterDisplay = (value, unit, target) => {
+    const isInRange = value >= target.min && value <= target.max;
+    const span = document.createElement('span');
+    span.className = isInRange ? 'text-green-600' : 'text-red-600';
+    span.textContent = `${value.toFixed(1)} ${unit}`;
+    return span;
+};
+
+// Afficher les paramètres d'une eau dans un conteneur (sécurisé contre XSS - pas de innerHTML)
+const displayCalculatorParameters = (container, water) => {
+    if (!container) return;
+    container.innerHTML = '';
+    Object.entries(PARAMETERS_OF_INTEREST)
+        .filter(([name]) => name !== 'TAC' && name !== 'PH')
+        .forEach(([name, info]) => {
+            const value = water[name] || 0;
+            const row = document.createElement('div');
+            row.className = 'flex justify-between items-center p-3 rounded-lg bg-slate-700/30 border border-slate-600/30';
+            const label = document.createElement('span');
+            label.className = 'font-medium text-slate-300';
+            label.textContent = `${name}:`;
+            row.appendChild(label);
+            row.appendChild(createParameterDisplay(value, info.unit, info.target));
+            container.appendChild(row);
+        });
+};
+
+// Recalculer et afficher l'eau modifiée à partir des saisies
+const updateCalculations = () => {
+    if (!calculatorBaseWater) return;
+    const waterQuantity = document.getElementById('waterQuantity').value;
+    const additions = {};
+    MINERAL_INPUT_IDS.forEach(id => {
+        additions[id] = parseFloat(document.getElementById(id).value) || 0;
+    });
+
+    const modifiedWater = calculateMineralAdditions(calculatorBaseWater, additions, waterQuantity);
+    displayCalculatorParameters(document.getElementById('modifiedWaterParams'), modifiedWater);
+};
+
+// Rafraîchir l'affichage complet du calculateur (eau de base + eau modifiée)
+const renderCalculator = () => {
+    if (!calculatorBaseWater) return;
+    displayCalculatorParameters(document.getElementById('baseWaterParams'), calculatorBaseWater);
+    updateCalculations();
+};
+
+// Attacher les écouteurs du calculateur une seule fois
+function initializeCalculator() {
+    if (calculatorInitialized) return;
     const waterCalculator = document.getElementById('waterCalculator');
     const openCalculatorBtn = document.getElementById('openCalculator');
     if (!waterCalculator || !openCalculatorBtn) return;
 
-    // Cacher le calculateur initialement
-    waterCalculator.classList.add('hidden');
-
-    // Supprimer l'ancien écouteur d'événement s'il existe
-    const oldListener = openCalculatorBtn._calculatorListener;
-    if (oldListener) {
-        openCalculatorBtn.removeEventListener('click', oldListener);
-    }
-
-    // Créer et stocker le nouvel écouteur
-    const newListener = () => {
+    openCalculatorBtn.addEventListener('click', () => {
         waterCalculator.classList.toggle('hidden');
         if (!waterCalculator.classList.contains('hidden')) {
-            // Initialiser le calculateur seulement quand il est ouvert
-            initializeCalculator(baseWater);
+            renderCalculator();
         }
-    };
-    openCalculatorBtn._calculatorListener = newListener;
+    });
 
-    // Ajouter le nouvel écouteur
-    openCalculatorBtn.addEventListener('click', newListener);
-}
-
-// Fonction pour initialiser le calculateur
-function initializeCalculator(baseWater) {
-    const waterCalculator = document.getElementById('waterCalculator');
-    if (!waterCalculator) return;
-
-    // Afficher les paramètres de base
-    const baseWaterParams = document.getElementById('baseWaterParams');
-    const modifiedWaterParams = document.getElementById('modifiedWaterParams');
-
-    // Fonction pour créer l'affichage des paramètres (sécurisé contre XSS)
-    const createParameterDisplay = (value, unit, target) => {
-        const isInRange = value >= target.min && value <= target.max;
-        const span = document.createElement('span');
-        span.className = isInRange ? 'text-green-600' : 'text-red-600';
-        span.textContent = `${value.toFixed(1)} ${unit}`;
-        return span;
-    };
-
-    // Afficher les paramètres initiaux (sécurisé contre XSS - pas de innerHTML)
-    const displayParameters = (container, water) => {
-        container.innerHTML = '';
-        Object.entries(PARAMETERS_OF_INTEREST)
-            .filter(([name]) => name !== 'TAC' && name !== 'PH')
-            .forEach(([name, info]) => {
-                const value = water[name] || 0;
-                const row = document.createElement('div');
-                row.className = 'flex justify-between items-center p-3 rounded-lg bg-slate-700/30 border border-slate-600/30';
-                const label = document.createElement('span');
-                label.className = 'font-medium text-slate-300';
-                label.textContent = `${name}:`;
-                row.appendChild(label);
-                row.appendChild(createParameterDisplay(value, info.unit, info.target));
-                container.appendChild(row);
-            });
-    };
-
-    // Afficher l'eau de base
-    displayParameters(baseWaterParams, baseWater);
-
-    // Fonction pour mettre à jour les calculs
-    const updateCalculations = () => {
-        const waterQuantity = document.getElementById('waterQuantity').value;
-        const additions = {
-            calciumSulfate: parseFloat(document.getElementById('calciumSulfate').value) || 0,
-            magnesiumSulfate: parseFloat(document.getElementById('magnesiumSulfate').value) || 0,
-            calciumChloride: parseFloat(document.getElementById('calciumChloride').value) || 0,
-            sodiumChloride: parseFloat(document.getElementById('sodiumChloride').value) || 0,
-            calciumCarbonate: parseFloat(document.getElementById('calciumCarbonate').value) || 0,
-            sodiumBicarbonate: parseFloat(document.getElementById('sodiumBicarbonate').value) || 0,
-            potassiumChloride: parseFloat(document.getElementById('potassiumChloride').value) || 0
-        };
-
-        const modifiedWater = calculateMineralAdditions(baseWater, additions, waterQuantity);
-        displayParameters(modifiedWaterParams, modifiedWater);
-    };
-
-    // Ajouter les événements pour les mises à jour en direct
-    const waterQuantityInput = document.getElementById('waterQuantity');
-    if (waterQuantityInput) {
-        waterQuantityInput.addEventListener('input', updateCalculations);
-    }
-
-    // Liste des IDs des inputs de minéraux
-    const mineralInputIds = [
-        'calciumSulfate',
-        'magnesiumSulfate',
-        'calciumChloride',
-        'sodiumChloride',
-        'calciumCarbonate',
-        'sodiumBicarbonate',
-        'potassiumChloride'
-    ];
-
-    // Ajouter les événements à chaque input de minéral
-    mineralInputIds.forEach(id => {
+    ['waterQuantity', ...MINERAL_INPUT_IDS].forEach(id => {
         const input = document.getElementById(id);
         if (input) {
             input.addEventListener('input', updateCalculations);
         }
     });
 
-    // Calculer les valeurs initiales
-    updateCalculations();
+    calculatorInitialized = true;
+}
+
+// Mettre à jour l'eau de base du calculateur
+function updateCalculator(baseWater) {
+    calculatorBaseWater = baseWater;
+    initializeCalculator();
+
+    const waterCalculator = document.getElementById('waterCalculator');
+    if (waterCalculator) {
+        // Cacher le calculateur à chaque nouvelle sélection de réseau
+        waterCalculator.classList.add('hidden');
+    }
 }
 
 // Fonction pour cacher tous les résultats
@@ -373,11 +379,6 @@ const hideError = () => {
     }
 };
 
-// Formatage des dates
-const formatDate = (dateStr) => {
-    return luxon.DateTime.fromISO(dateStr).toLocaleString({ locale: 'fr' });
-};
-
 // Chargement des départements
 const loadDepartements = async () => {
     try {
@@ -398,7 +399,9 @@ const loadDepartements = async () => {
         }
         debug(`${departements.length} départements chargés`);
 
-        departements.sort((a, b) => parseInt(a.code) - parseInt(b.code));
+        // Corse : 2A et 2B se placent entre 19 et 21
+        const deptSortKey = (code) => parseFloat(code.replace('2A', '20.1').replace('2B', '20.2'));
+        departements.sort((a, b) => deptSortKey(a.code) - deptSortKey(b.code));
         departements.forEach(dept => {
             const option = document.createElement('option');
             option.value = dept.code;
@@ -471,84 +474,182 @@ const loadCommunes = async (deptCode) => {
     }
 };
 
-// Chargement des analyses d'eau
+// Vérifier si le backend SISE-Eaux est disponible
+let siseAvailable = null;
+let siseLastCheck = 0;
+const SISE_CHECK_INTERVAL = 30000; // Re-vérifier toutes les 30s si indisponible
+const checkSiseBackend = async () => {
+    const now = Date.now();
+    // Retourner le cache si disponible et récent
+    if (siseAvailable === true) return true;
+    if (siseAvailable === false && (now - siseLastCheck) < SISE_CHECK_INTERVAL) return false;
+
+    siseLastCheck = now;
+    try {
+        const response = await fetch('/api/sise/health', { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+            const health = await response.json();
+            siseAvailable = health.status === 'ok' && health.record_count > 0;
+            if (siseAvailable) {
+                debug(`Backend SISE-Eaux disponible — ${health.record_count} résultats, dernière sync: ${health.last_sync}`);
+            } else {
+                debug('Backend SISE-Eaux pas encore prêt: ' + JSON.stringify(health));
+            }
+        } else {
+            siseAvailable = false;
+            debug('Backend SISE-Eaux HTTP ' + response.status);
+        }
+    } catch (e) {
+        siseAvailable = false;
+        debug('Backend SISE-Eaux indisponible: ' + e.message);
+    }
+    return siseAvailable;
+};
+
+// Requêter le backend SISE-Eaux pour les réseaux d'une commune
+const fetchSiseNetworks = async (communeCode) => {
+    const response = await fetch(`/api/sise/communes_udi?code_commune=${encodeURIComponent(communeCode)}`);
+    if (!response.ok) throw new Error(`SISE HTTP ${response.status}`);
+    return response.json();
+};
+
+// Requêter le backend SISE-Eaux pour les analyses d'un réseau
+const fetchSiseAnalyses = async (networkCode, paramCodes) => {
+    const response = await fetch(`/api/sise/resultats?code_reseau=${encodeURIComponent(networkCode)}&code_parametre=${encodeURIComponent(paramCodes)}`);
+    if (!response.ok) throw new Error(`SISE HTTP ${response.status}`);
+    return response.json();
+};
+
+// Requêter Hub'Eau pour les réseaux d'une commune
+const fetchHubEauNetworks = async (communeCode) => {
+    const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/communes_udi?code_commune=${encodeURIComponent(communeCode)}&size=100`, {
+        headers: { 'Accept': 'application/json' }
+    });
+    if (!response.ok) throw new Error(`Hub'Eau HTTP ${response.status}`);
+    return response.json();
+};
+
+// Requêter Hub'Eau pour les analyses d'un réseau
+const fetchHubEauAnalyses = async (networkCode, paramCodes) => {
+    const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis?code_reseau=${encodeURIComponent(networkCode)}&code_parametre=${encodeURIComponent(paramCodes)}&size=5000`, {
+        headers: { 'Accept': 'application/json' }
+    });
+    if (!response.ok) throw new Error(`Hub'Eau HTTP ${response.status}`);
+    return response.json();
+};
+
+// Jeton de la dernière requête : ignore les réponses d'une sélection obsolète
+let currentRequestId = 0;
+
+// Chargement des analyses d'eau — interroge Hub'Eau + SISE-Eaux, fusionne les réseaux
 const loadAnalyses = async (communeCode) => {
+    const requestId = ++currentRequestId;
     try {
         setLoading(true);
         hideError();
 
-        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/communes_udi?code_commune=${encodeURIComponent(communeCode)}&size=100`, {
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ${response.status}`);
-        }
-        const data = await response.json();
-        if (!data || typeof data.count === 'undefined' || !Array.isArray(data.data)) {
-            throw new Error('Format de réponse invalide');
-        }
+        // Lancer les deux requêtes en parallèle
+        const hasSise = await checkSiseBackend();
+        const promises = [fetchHubEauNetworks(communeCode).catch(() => null)];
+        if (hasSise) promises.push(fetchSiseNetworks(communeCode).catch(() => null));
 
-        if (data.count === 0) {
+        const [hubEauData, siseData] = await Promise.all(promises);
+        if (requestId !== currentRequestId) return;
+
+        // Fusionner les réseaux des deux sources (dédoublonnage par code_reseau)
+        const uniqueNetworks = new Map();
+        const addNetworks = (data) => {
+            if (!data || !Array.isArray(data.data)) return;
+            data.data.forEach(item => {
+                if (!uniqueNetworks.has(item.code_reseau)) {
+                    uniqueNetworks.set(item.code_reseau, {
+                        code: item.code_reseau,
+                        name: item.nom_reseau
+                    });
+                }
+            });
+        };
+
+        addNetworks(hubEauData);
+        addNetworks(siseData);
+
+        if (uniqueNetworks.size === 0) {
             showError('Aucune donnée disponible pour cette commune');
             return;
         }
-
-        // Dédoublonnage des réseaux
-        const uniqueNetworks = new Map();
-        data.data.forEach(item => {
-            if (!uniqueNetworks.has(item.code_reseau)) {
-                uniqueNetworks.set(item.code_reseau, {
-                    code: item.code_reseau,
-                    name: item.nom_reseau
-                });
-            }
-        });
 
         const networks = Array.from(uniqueNetworks.values())
             .sort((a, b) => a.name.localeCompare(b.name));
 
         displayNetworks(networks);
     } catch (error) {
+        if (requestId !== currentRequestId) return;
         showError('Erreur lors du chargement des réseaux');
         console.error(error);
     } finally {
-        setLoading(false);
+        if (requestId === currentRequestId) setLoading(false);
     }
 };
 
-// Chargement des analyses pour un réseau spécifique
+// Normaliser et fusionner les analyses Hub'Eau et SISE-Eaux.
+// Un même prélèvement (code_prelevement identique dans les deux sources) n'est gardé qu'une fois,
+// en privilégiant SISE-Eaux ; on obtient ainsi l'historique long de Hub'Eau et les valeurs récentes de SISE.
+const mergeAnalyses = (sources) => {
+    const merged = new Map();
+    sources.forEach(({ data, source }) => {
+        if (!data || !Array.isArray(data.data)) return;
+        data.data.forEach(item => {
+            const value = parseFloat(item.resultat_numerique);
+            const date = luxon.DateTime.fromISO(item.date_prelevement || '');
+            if (!Number.isFinite(value) || !date.isValid) return;
+
+            const codeParametre = String(item.code_parametre);
+            const key = item.code_prelevement
+                ? `${item.code_prelevement}|${codeParametre}`
+                : `${date.toISODate()}|${codeParametre}|${value}`;
+            if (merged.has(key)) return;
+
+            merged.set(key, { code_parametre: codeParametre, value, date, source });
+        });
+    });
+    return Array.from(merged.values());
+};
+
+// Chargement des analyses pour un réseau — fusionne Hub'Eau et SISE-Eaux
 const loadNetworkAnalyses = async (networkCode) => {
+    const requestId = ++currentRequestId;
     try {
         setLoading(true);
         hideError();
 
         const paramCodes = Object.values(PARAMETERS_OF_INTEREST).map(p => p.code).join(',');
-        const response = await fetch(`https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis?code_reseau=${encodeURIComponent(networkCode)}&code_parametre=${encodeURIComponent(paramCodes)}&size=5000`, {
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ${response.status}`);
-        }
-        const data = await response.json();
-        if (!data || typeof data.count === 'undefined' || !Array.isArray(data.data)) {
-            throw new Error('Format de réponse invalide');
-        }
 
-        if (data.count === 0) {
+        // Lancer les deux requêtes en parallèle
+        const hasSise = await checkSiseBackend();
+        const promises = [fetchHubEauAnalyses(networkCode, paramCodes).catch(() => null)];
+        if (hasSise) promises.push(fetchSiseAnalyses(networkCode, paramCodes).catch(() => null));
+
+        const [hubEauData, siseData] = await Promise.all(promises);
+        if (requestId !== currentRequestId) return;
+
+        const analyses = mergeAnalyses([
+            { data: siseData, source: DATA_SOURCES.SISE_EAUX },
+            { data: hubEauData, source: DATA_SOURCES.HUBEAU }
+        ]);
+        debug(`Analyses fusionnées : ${analyses.length} (Hub'Eau ${hubEauData?.data?.length ?? 0}, SISE ${siseData?.data?.length ?? 0})`);
+
+        if (analyses.length === 0) {
             showError('Aucune analyse disponible pour ce réseau');
             return;
         }
 
-        displayAnalyses(data.data);
+        displayAnalyses(analyses);
     } catch (error) {
+        if (requestId !== currentRequestId) return;
         showError('Erreur lors du chargement des analyses');
         console.error(error);
     } finally {
-        setLoading(false);
+        if (requestId === currentRequestId) setLoading(false);
     }
 };
 
@@ -597,181 +698,161 @@ const displayNetworks = (networks) => {
     }
 };
 
-// Affichage des analyses
+// Source virtuelle pour le HCO3 calculé depuis le TAC
+const CALCULATED_SOURCE = { id: 'calcul', name: 'Calculé (TAC)', icon: 'fas fa-calculator', color: 'amber' };
+
+// Formater une valeur numérique à la française (2 décimales max)
+const formatValue = (value) => value.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+
+// Affichage des analyses fusionnées
 const displayAnalyses = (analyses) => {
-    // Regrouper les analyses par paramètre
+    // Regrouper les analyses par paramètre, de la plus récente à la plus ancienne
     const parameterGroups = {};
     Object.entries(PARAMETERS_OF_INTEREST).forEach(([name, info]) => {
-        parameterGroups[name] = analyses.filter(a => a.code_parametre === info.code)
-            .sort((a, b) => {
-                const dateA = luxon.DateTime.fromISO(a.date_prelevement);
-                const dateB = luxon.DateTime.fromISO(b.date_prelevement);
-                return dateB - dateA;
-            });
+        parameterGroups[name] = analyses
+            .filter(a => a.code_parametre === info.code)
+            .sort((a, b) => b.date - a.date);
     });
 
-    // Afficher les dernières valeurs
-    displayCurrentValues(parameterGroups);
+    // HCO3 : mesuré (code 1327) environ une fois par an, complété par le calcul depuis le TAC (mensuel)
+    // pour les jours sans mesure directe
+    const measuredHco3Days = new Set(parameterGroups['HCO3'].map(a => a.date.toISODate()));
+    const computedHco3 = parameterGroups['TAC']
+        .filter(a => !measuredHco3Days.has(a.date.toISODate()))
+        .map(a => ({ ...a, value: calculateHCO3(a.value), source: CALCULATED_SOURCE }));
+    parameterGroups['HCO3'] = [...parameterGroups['HCO3'], ...computedHco3].sort((a, b) => b.date - a.date);
 
-    // Afficher les graphiques
-    displayCharts(parameterGroups);
+    // Libellé affiché pour chaque paramètre
+    const labels = {};
+    Object.keys(PARAMETERS_OF_INTEREST).forEach(name => { labels[name] = name; });
+    if (computedHco3.length > 0) {
+        labels['HCO3'] = measuredHco3Days.size > 0 ? 'HCO3 (mesuré + calculé)' : 'HCO3 (calculé)';
+    }
+
+    // Sources ayant réellement fourni des mesures
+    const usedSources = [...new Set(analyses.map(a => a.source))];
+
+    displayCurrentValues(parameterGroups, labels, usedSources);
+    displayCharts(parameterGroups, labels);
+};
+
+// Créer un badge source pour une carte paramètre
+const createSourceBadge = (source, date) => {
+    const badge = document.createElement('div');
+    const colorMap = { sky: 'sky', emerald: 'emerald', amber: 'amber' };
+    const c = colorMap[source.color] || 'sky';
+    badge.className = `mt-4 flex items-center gap-2 px-4 py-2 rounded-lg bg-${c}-500/10 border border-${c}-500/20`;
+
+    const sourceIcon = document.createElement('i');
+    sourceIcon.className = `${source.icon} text-${c}-500 text-xs`;
+    badge.appendChild(sourceIcon);
+
+    const text = document.createElement('span');
+    text.className = `text-xs text-${c}-400`;
+    const formattedDate = date.setLocale('fr').toLocaleString({ day: 'numeric', month: 'short', year: 'numeric' });
+    text.textContent = `${source.name} — ${formattedDate}`;
+    badge.appendChild(text);
+
+    return badge;
+};
+
+// Statistiques sur les 12 mois précédant la dernière mesure
+const computeYearStats = (analyses) => {
+    const since = analyses[0].date.minus({ months: 12 });
+    const values = analyses.filter(a => a.date >= since).map(a => a.value);
+    return {
+        n: values.length,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        avg: values.reduce((sum, v) => sum + v, 0) / values.length
+    };
+};
+
+// Calculer l'ancienneté des données et retourner un indicateur
+const getDataFreshnessInfo = (latestDate) => {
+    if (!latestDate) return null;
+    const now = luxon.DateTime.now();
+    const diff = now.diff(latestDate, ['months', 'days']);
+    const months = Math.floor(diff.months);
+    const days = Math.floor(diff.days);
+
+    if (months >= 6) {
+        return { level: 'old', color: 'red', icon: 'fas fa-exclamation-triangle', text: `Données anciennes (${months} mois)` };
+    } else if (months >= 3) {
+        return { level: 'aging', color: 'amber', icon: 'fas fa-exclamation-circle', text: `Données de ${months} mois` };
+    } else if (months >= 1) {
+        return { level: 'recent', color: 'sky', icon: 'fas fa-info-circle', text: `Données de ${months} mois` };
+    }
+    return { level: 'fresh', color: 'emerald', icon: 'fas fa-check-circle', text: `Données récentes (${days}j)` };
+};
+
+// Créer la carte d'un paramètre : dernière valeur, statistiques 12 mois, source
+const createParameterCard = (name, label, analyses) => {
+    const lastAnalysis = analyses[0];
+    const isComputed = lastAnalysis.source === CALCULATED_SOURCE;
+
+    const card = document.createElement('div');
+    card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'flex justify-between items-start mb-4';
+    const h3 = document.createElement('h3');
+    h3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
+    h3.textContent = label;
+    const iconDiv = document.createElement('div');
+    iconDiv.className = `p-2 rounded-lg bg-slate-700/30 ${isComputed ? 'text-amber-500' : 'text-sky-500'}`;
+    const icon = document.createElement('i');
+    icon.className = isComputed ? 'fas fa-calculator' : 'fas fa-atom';
+    iconDiv.appendChild(icon);
+    header.appendChild(h3);
+    header.appendChild(iconDiv);
+
+    // Valeur
+    const valueP = document.createElement('p');
+    valueP.className = 'text-3xl font-bold text-white mb-2';
+    valueP.textContent = formatValue(lastAnalysis.value) + ' ';
+    const unitSpan = document.createElement('span');
+    unitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
+    unitSpan.textContent = PARAMETERS_OF_INTEREST[name].unit;
+    valueP.appendChild(unitSpan);
+
+    card.appendChild(header);
+    card.appendChild(valueP);
+
+    // Variabilité sur 12 mois (si plusieurs mesures)
+    const stats = computeYearStats(analyses);
+    if (stats.n > 1) {
+        const statsP = document.createElement('p');
+        statsP.className = 'text-xs text-slate-400';
+        statsP.textContent = `12 mois : min ${formatValue(stats.min)} · moy ${formatValue(stats.avg)} · max ${formatValue(stats.max)} (${stats.n} mesures)`;
+        card.appendChild(statsP);
+    }
+
+    // Badge source + date
+    card.appendChild(createSourceBadge(lastAnalysis.source, lastAnalysis.date));
+
+    return card;
 };
 
 // Affichage des dernières valeurs
-const displayCurrentValues = (parameterGroups) => {
+const displayCurrentValues = (parameterGroups, labels, usedSources) => {
     const container = document.getElementById('currentParameters');
-    if (container) {
-        const grid = container.querySelector('.grid');
-        if (grid) {
-            grid.innerHTML = '';
-        }
-    }
+    const grid = container ? container.querySelector('.grid') : null;
+    if (!grid) return;
+    grid.innerHTML = '';
 
     const currentValues = {};
     Object.entries(parameterGroups).forEach(([name, analyses]) => {
         if (analyses.length === 0) return;
-
-        // Créer une carte pour chaque paramètre
-        const card = document.createElement('div');
-        // card.className = 'bg-white p-4 rounded-lg shadow'; // OLD
-        card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
-
-        const lastAnalysis = analyses[0];
-
-        // Construction sécurisée du DOM (pas de innerHTML avec des données API)
-        const header = document.createElement('div');
-        header.className = 'flex justify-between items-start mb-4';
-        const h3 = document.createElement('h3');
-        h3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
-        h3.textContent = name;
-        const iconDiv = document.createElement('div');
-        iconDiv.className = 'p-2 rounded-lg bg-slate-700/30 text-sky-500';
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-atom';
-        iconDiv.appendChild(icon);
-        header.appendChild(h3);
-        header.appendChild(iconDiv);
-
-        const valueP = document.createElement('p');
-        valueP.className = 'text-3xl font-bold text-white mb-2';
-        valueP.textContent = lastAnalysis.resultat_numerique + ' ';
-        const unitSpan = document.createElement('span');
-        unitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
-        unitSpan.textContent = PARAMETERS_OF_INTEREST[name].unit;
-        valueP.appendChild(unitSpan);
-
-        const dateP = document.createElement('p');
-        dateP.className = 'text-xs text-slate-500 mt-2 flex items-center gap-1';
-        const clockIcon = document.createElement('i');
-        clockIcon.className = 'far fa-clock';
-        dateP.appendChild(clockIcon);
-        dateP.appendChild(document.createTextNode(' ' + formatDate(lastAnalysis.date_prelevement)));
-
-        card.appendChild(header);
-        card.appendChild(valueP);
-        card.appendChild(dateP);
-
-        const container = document.getElementById('currentParameters');
-        if (container) {
-            const grid = container.querySelector('.grid');
-            if (grid) {
-                grid.appendChild(card);
-            }
-        }
-
-        currentValues[name] = lastAnalysis.resultat_numerique;
+        grid.appendChild(createParameterCard(name, labels[name], analyses));
+        currentValues[name] = analyses[0].value;
     });
 
-    // Ajouter la carte HCO3 si le TAC est disponible
-    const tacAnalyses = parameterGroups['TAC'];
-    if (tacAnalyses && tacAnalyses.length > 0) {
-        const lastTac = tacAnalyses[0];
-        const hco3Value = calculateHCO3(lastTac.resultat_numerique);
+    container.classList.remove('hidden');
 
-        if (hco3Value !== null) {
-            const card = document.createElement('div');
-            card.className = 'bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm hover:border-sky-500/50 transition-colors group';
-            // Construction sécurisée du DOM (pas de innerHTML avec des données API)
-            const hco3Header = document.createElement('div');
-            hco3Header.className = 'flex justify-between items-start mb-4';
-            const hco3H3 = document.createElement('h3');
-            hco3H3.className = 'text-lg font-semibold text-slate-300 group-hover:text-sky-400 transition-colors';
-            hco3H3.textContent = 'HCO3 (calculé)';
-            const hco3IconDiv = document.createElement('div');
-            hco3IconDiv.className = 'p-2 rounded-lg bg-slate-700/30 text-amber-500';
-            const hco3Icon = document.createElement('i');
-            hco3Icon.className = 'fas fa-calculator';
-            hco3IconDiv.appendChild(hco3Icon);
-            hco3Header.appendChild(hco3H3);
-            hco3Header.appendChild(hco3IconDiv);
-
-            const hco3ValueP = document.createElement('p');
-            hco3ValueP.className = 'text-3xl font-bold text-white mb-2';
-            hco3ValueP.textContent = hco3Value.toFixed(1) + ' ';
-            const hco3UnitSpan = document.createElement('span');
-            hco3UnitSpan.className = 'text-sm text-slate-500 font-normal ml-1';
-            hco3UnitSpan.textContent = 'mg/L';
-            hco3ValueP.appendChild(hco3UnitSpan);
-
-            const hco3DateP = document.createElement('p');
-            hco3DateP.className = 'text-xs text-slate-500 mt-2 flex items-center gap-1';
-            const hco3ClockIcon = document.createElement('i');
-            hco3ClockIcon.className = 'far fa-clock';
-            hco3DateP.appendChild(hco3ClockIcon);
-            hco3DateP.appendChild(document.createTextNode(' Calculé à partir du TAC du ' + formatDate(lastTac.date_prelevement)));
-
-            card.appendChild(hco3Header);
-            card.appendChild(hco3ValueP);
-            card.appendChild(hco3DateP);
-            const container = document.getElementById('currentParameters');
-            if (container) {
-                const grid = container.querySelector('.grid');
-                if (grid) {
-                    grid.appendChild(card);
-                }
-            }
-
-            // Ajouter la valeur HCO3 aux currentValues avant de les passer au calculateur
-            currentValues['HCO3'] = hco3Value;
-        }
-    }
-
-    const currentParameters = document.getElementById('currentParameters');
-    if (currentParameters) {
-        currentParameters.classList.remove('hidden');
-    }
-
-    // Afficher les informations sur la source des données
-    const dataSourceInfo = document.getElementById('dataSourceInfo');
-    if (dataSourceInfo) {
-        // Trouver la date de prélèvement la plus récente parmi tous les paramètres
-        let latestDate = null;
-        Object.values(parameterGroups).forEach(analyses => {
-            if (analyses.length > 0) {
-                const date = luxon.DateTime.fromISO(analyses[0].date_prelevement);
-                if (!latestDate || date > latestDate) {
-                    latestDate = date;
-                }
-            }
-        });
-
-        dataSourceInfo.innerHTML = '';
-        const infoIcon = document.createElement('i');
-        infoIcon.className = 'fas fa-info-circle text-sky-500 flex-shrink-0';
-        dataSourceInfo.appendChild(infoIcon);
-
-        const infoText = document.createElement('span');
-        if (latestDate) {
-            infoText.textContent = 'Source : Hub\'Eau (eaufrance.fr) \u2014 Dernier prélèvement : ' +
-                latestDate.setLocale('fr').toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' }) +
-                ' \u2014 Mise à jour mensuelle, un décalage avec les données officielles (Orobnat) est possible.';
-        } else {
-            infoText.textContent = 'Source : Hub\'Eau (eaufrance.fr) \u2014 Mise à jour mensuelle.';
-        }
-        dataSourceInfo.appendChild(infoText);
-        dataSourceInfo.classList.remove('hidden');
-        dataSourceInfo.classList.add('flex', 'items-center', 'gap-3');
-    }
+    // Bandeau global de source et fraîcheur des données
+    displayDataSourceBanner(parameterGroups, usedSources);
 
     // S'assurer que toutes les valeurs sont définies avant de les passer au calculateur
     Object.keys(PARAMETERS_OF_INTEREST).forEach(key => {
@@ -783,195 +864,167 @@ const displayCurrentValues = (parameterGroups) => {
     updateCalculator(currentValues);
 };
 
-// Affichage des graphiques
-const displayCharts = (parameterGroups) => {
-    const chartsGrid = document.getElementById('chartsGrid');
-    if (chartsGrid) {
-        chartsGrid.innerHTML = '';
-    }
+// Bandeau global indiquant les sources et la fraîcheur des données
+const displayDataSourceBanner = (parameterGroups, usedSources) => {
+    const dataSourceInfo = document.getElementById('dataSourceInfo');
+    if (!dataSourceInfo) return;
 
-    Object.entries(parameterGroups).forEach(([name, analyses]) => {
-        if (analyses.length === 0) return;
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-
-        const data = analyses.map(a => ({
-            x: luxon.DateTime.fromISO(a.date_prelevement).toJSDate(),
-            y: a.resultat_numerique
-        })).sort((a, b) => a.x - b.x);
-
-        const color = PARAMETER_COLORS[name] || { color: 'rgb(59, 130, 246)', background: 'rgba(59, 130, 246, 0.1)' };
-        new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: [{
-                    label: name,
-                    data: data,
-                    borderColor: color.color,
-                    backgroundColor: color.background,
-                    borderWidth: 2,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointBackgroundColor: color.color,
-                    pointBorderColor: 'white',
-                    pointHoverRadius: 6,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    title: {
-                        display: true,
-                        text: `${name} (${PARAMETERS_OF_INTEREST[name].unit})`,
-                        font: {
-                            size: 16,
-                            weight: 'bold'
-                        },
-                        padding: 20
-                    },
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            unit: 'month',
-                            displayFormats: {
-                                month: 'MMM yyyy'
-                            }
-                        },
-                        title: {
-                            display: true,
-                            text: 'Date',
-                            font: {
-                                weight: 'bold'
-                            }
-                        },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                        }
-                    },
-                    y: {
-                        title: {
-                            display: true,
-                            text: PARAMETERS_OF_INTEREST[name].unit,
-                            font: {
-                                weight: 'bold'
-                            }
-                        },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                        }
-                    }
-                }
-            }
-        });
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'bg-slate-800/40 p-6 rounded-2xl shadow-xl border border-slate-700/50 backdrop-blur-sm';
-        wrapper.style.height = '400px';
-        wrapper.appendChild(canvas);
-        const chartsGrid = document.getElementById('chartsGrid');
-        if (chartsGrid) {
-            chartsGrid.appendChild(wrapper);
+    // Trouver la date de la mesure la plus récente
+    let latestDate = null;
+    Object.values(parameterGroups).forEach(analyses => {
+        if (analyses.length > 0 && (!latestDate || analyses[0].date > latestDate)) {
+            latestDate = analyses[0].date;
         }
     });
 
-    // Ajouter le graphique HCO3 calculé si des données TAC sont disponibles
-    if (parameterGroups['TAC'] && parameterGroups['TAC'].length > 0) {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+    const sourcesText = 'Sources : ' + usedSources.map(s => s.fullName).join(' + ');
+    const mainSource = usedSources.includes(DATA_SOURCES.SISE_EAUX) ? DATA_SOURCES.SISE_EAUX : DATA_SOURCES.HUBEAU;
 
-        const data = parameterGroups['TAC'].map(a => ({
-            x: luxon.DateTime.fromISO(a.date_prelevement).toJSDate(),
-            y: calculateHCO3(a.resultat_numerique)
-        })).sort((a, b) => a.x - b.x);
+    dataSourceInfo.innerHTML = '';
+    dataSourceInfo.className = 'mb-8 p-6 rounded-xl border text-sm space-y-4';
 
-        const hco3Color = PARAMETER_COLORS['HCO3'];
-        new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: [{
-                    label: 'HCO3 (calculé)',
-                    data: data,
-                    borderColor: hco3Color.color,
-                    backgroundColor: hco3Color.background,
-                    borderWidth: 2,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointBackgroundColor: hco3Color.color,
-                    pointBorderColor: 'white',
-                    pointHoverRadius: 6,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    title: {
-                        display: true,
-                        text: `HCO3 calculé (${PARAMETERS_OF_INTEREST['HCO3'].unit})`,
-                        font: {
-                            size: 16,
-                            weight: 'bold'
-                        },
-                        padding: 20
-                    },
-                    legend: {
-                        display: false
-                    }
+    if (!latestDate) {
+        dataSourceInfo.classList.add('bg-slate-800/30', 'border-slate-700/30', 'text-slate-400');
+        const text = document.createElement('span');
+        text.textContent = sourcesText + ' — Mise à jour mensuelle.';
+        dataSourceInfo.appendChild(text);
+        dataSourceInfo.classList.remove('hidden');
+        return;
+    }
+
+    const freshness = getDataFreshnessInfo(latestDate);
+    const colorMap = { red: 'red', amber: 'amber', sky: 'sky', emerald: 'emerald' };
+    const fc = colorMap[freshness.color] || 'sky';
+
+    dataSourceInfo.classList.add(`bg-${fc}-500/5`, `border-${fc}-500/20`, 'text-slate-300');
+
+    // Ligne 1 : Sources
+    const sourceLine = document.createElement('div');
+    sourceLine.className = 'flex items-center gap-3';
+    const sourceIcon = document.createElement('i');
+    sourceIcon.className = `${mainSource.icon} text-${fc}-500 flex-shrink-0`;
+    sourceLine.appendChild(sourceIcon);
+    const sourceText = document.createElement('span');
+    sourceText.className = 'font-medium';
+    sourceText.textContent = sourcesText;
+    sourceLine.appendChild(sourceText);
+    dataSourceInfo.appendChild(sourceLine);
+
+    // Ligne 2 : Dates et fraîcheur
+    const dateLine = document.createElement('div');
+    dateLine.className = 'flex items-center gap-3 ml-7';
+    const freshnessIcon = document.createElement('i');
+    freshnessIcon.className = `${freshness.icon} text-${fc}-500 flex-shrink-0`;
+    dateLine.appendChild(freshnessIcon);
+    const dateText = document.createElement('span');
+    const formattedLatest = latestDate.setLocale('fr').toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' });
+    dateText.textContent = 'Dernier prélèvement : ' + formattedLatest + ' — ' + freshness.text;
+    dateLine.appendChild(dateText);
+    dataSourceInfo.appendChild(dateLine);
+
+    // Ligne 3 : Note sur le décalage Hub'Eau (si SISE-Eaux n'a rien fourni)
+    if (mainSource === DATA_SOURCES.HUBEAU) {
+        const noteLine = document.createElement('div');
+        noteLine.className = 'flex items-center gap-3 ml-7 text-slate-500 text-xs';
+        const noteIcon = document.createElement('i');
+        noteIcon.className = 'fas fa-clock flex-shrink-0';
+        noteLine.appendChild(noteIcon);
+        const noteText = document.createElement('span');
+        noteText.textContent = 'Hub\'Eau rediffuse les données SISE-Eaux avec un décalage. Les résultats les plus récents peuvent être disponibles sur le site officiel Orobnat.';
+        noteLine.appendChild(noteText);
+        dataSourceInfo.appendChild(noteLine);
+    }
+
+    dataSourceInfo.classList.remove('hidden');
+};
+
+// Instances Chart.js affichées (détruites avant chaque nouveau rendu)
+let chartInstances = [];
+
+// Couleurs des axes adaptées au thème sombre
+const CHART_TEXT_COLOR = 'rgb(148, 163, 184)'; // slate-400
+const CHART_TITLE_COLOR = 'rgb(226, 232, 240)'; // slate-200
+const CHART_GRID_COLOR = 'rgba(148, 163, 184, 0.12)';
+
+// Créer le graphique d'évolution d'un paramètre
+const createChart = (name, label, analyses) => {
+    const canvas = document.createElement('canvas');
+    const unit = PARAMETERS_OF_INTEREST[name].unit;
+    const color = PARAMETER_COLORS[name] || { color: 'rgb(59, 130, 246)', background: 'rgba(59, 130, 246, 0.1)' };
+
+    const data = analyses
+        .map(a => ({ x: a.date.toJSDate(), y: a.value }))
+        .sort((a, b) => a.x - b.x);
+
+    const axisTitle = (text) => ({ display: true, text, color: CHART_TEXT_COLOR, font: { weight: 'bold' } });
+
+    chartInstances.push(new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            datasets: [{
+                label,
+                data,
+                borderColor: color.color,
+                backgroundColor: color.background,
+                borderWidth: 2,
+                tension: 0.3,
+                pointRadius: 4,
+                pointBackgroundColor: color.color,
+                pointBorderColor: 'white',
+                pointHoverRadius: 6,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: `${label} (${unit})`,
+                    color: CHART_TITLE_COLOR,
+                    font: { size: 16, weight: 'bold' },
+                    padding: 20
                 },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            unit: 'month',
-                            displayFormats: {
-                                month: 'MMM yyyy'
-                            }
-                        },
-                        title: {
-                            display: true,
-                            text: 'Date',
-                            font: {
-                                weight: 'bold'
-                            }
-                        },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                        }
-                    },
-                    y: {
-                        title: {
-                            display: true,
-                            text: PARAMETERS_OF_INTEREST['HCO3'].unit,
-                            font: {
-                                weight: 'bold'
-                            }
-                        },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                        }
-                    }
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'month', displayFormats: { month: 'MMM yyyy' } },
+                    title: axisTitle('Date'),
+                    ticks: { color: CHART_TEXT_COLOR },
+                    grid: { color: CHART_GRID_COLOR }
+                },
+                y: {
+                    title: axisTitle(unit),
+                    ticks: { color: CHART_TEXT_COLOR },
+                    grid: { color: CHART_GRID_COLOR }
                 }
             }
-        });
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'bg-slate-800/40 p-6 rounded-2xl shadow-xl border border-slate-700/50 backdrop-blur-sm';
-        wrapper.style.height = '400px';
-        wrapper.appendChild(canvas);
-        const chartsGrid = document.getElementById('chartsGrid');
-        if (chartsGrid) {
-            chartsGrid.appendChild(wrapper);
         }
-    }
+    }));
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'bg-slate-800/40 p-6 rounded-2xl shadow-xl border border-slate-700/50 backdrop-blur-sm';
+    wrapper.style.height = '400px';
+    wrapper.appendChild(canvas);
+    return wrapper;
+};
+
+// Affichage des graphiques
+const displayCharts = (parameterGroups, labels) => {
+    chartInstances.forEach(chart => chart.destroy());
+    chartInstances = [];
+
+    const chartsGrid = document.getElementById('chartsGrid');
+    if (!chartsGrid) return;
+    chartsGrid.innerHTML = '';
+
+    Object.entries(parameterGroups).forEach(([name, analyses]) => {
+        if (analyses.length === 0) return;
+        chartsGrid.appendChild(createChart(name, labels[name], analyses));
+    });
 
     const charts = document.getElementById('charts');
     if (charts) {
