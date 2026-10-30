@@ -55,7 +55,7 @@ Le frontend vérifie la disponibilité du backend via `checkSiseBackend()` (`/ap
 
 ### Backend — Sync SISE-Eaux (backend/sync/)
 - `downloader.js` : résout via l'API data.gouv les ZIP `dis-AAAA-dept.zip` des `SISE_EAUX_YEARS` (défaut 2) dernières années, ou utilise `SISE_EAUX_ZIP_URL` (liste séparée par des virgules) ; téléchargement en `.part` puis renommage
-- `parser.js` : parse les CSV (COM_UDI, PLV, RESULT) en streaming, filtre les paramètres brassage (PARAM_CODES), insère par lots de 10 000
+- `parser.js` : parse les CSV (COM_UDI, PLV, RESULT) en streaming, filtre les paramètres brassage et qualité (PARAM_CODES), insère par lots de 10 000. Ajouter un code impose une resynchronisation
 - `index.js` : orchestre download → import dans DB temp → swap (verrou `data/sync.lock` partagé entre serveur et CLI)
 - Sync automatique : au démarrage si pas de DB ou données de plus de 7 jours, puis cron hebdomadaire (dimanche 3h)
 - L'API ouvre la base en **lecture seule** et la rouvre automatiquement si le fichier a été remplacé
@@ -71,6 +71,8 @@ Le frontend vérifie la disponibilité du backend via `checkSiseBackend()` (`/ap
 Définis dans `PARAMETERS_OF_INTEREST` (app.js) : Ca, Mg, Na, SO4, Cl, K, pH, TAC, HCO3.
 HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3()` depuis le TAC pour les autres prélèvements (source virtuelle `CALCULATED_SOURCE`).
 
+`QUALITY_PARAMETERS` (water.js) : chlore libre/total (1398/1399), nitrates (1340), fer et manganèse (1393/1394, **en µg/L**). Pas de graphique : `assessWaterQuality()` produit des alertes (`ok`/`vigilance`/`alerte`) avec conseils (Campden, chloramines…) affichées dans `#qualityAlerts`. Un paramètre jamais mesuré n'est pas affiché.
+
 ### Calculateur de minéraux
 `MINERAL_CONVERSIONS` contient les pourcentages de conversion pour 7 sels (gypse, sel d'Epsom, etc.), `ION_KEYS` fait le lien élément → paramètre.
 `calculateMineralAdditions()` calcule l'impact sur la composition de l'eau en mg/L.
@@ -79,6 +81,11 @@ HCO3 : valeur mesurée (code SANDRE 1327, ~1/an) complétée par `calculateHCO3(
 - `calculateResidualAlkalinity()` (Kolbach, mg/L CaCO3), `calculateSulfateChlorideRatio()`, `calculateIonBalance()` (contrôle de cohérence cations/anions) : affichés pour l'eau du réseau (`#brewingIndicators`) et l'eau modifiée (`#modifiedIndicators`)
 - `WATER_PROFILES` : profils cibles indicatifs (villes historiques + styles modernes) ; les profils historiques sont souvent déséquilibrés ioniquement, c'est connu
 - `solveMineralAdditions()` : moindres carrés relatifs sous contrainte de positivité (descente par coordonnées) sur `SOLVER_SALTS` ; ne peut qu'ajouter des ions
+
+### Eau de base, export et fiche
+- `buildBaseWaters()` : dernière mesure, moyenne ou maximum sur 12 mois (`#baseWaterMode`) ; le solveur et la comparaison suivent l'eau choisie
+- `toBeerXmlWaters()` : export BeerXML 1.0 (`<WATERS>`, ions en ppm) de l'eau de base et de l'eau modifiée, téléchargé via Blob
+- `#brewSheet` : fiche construite à la demande par `buildBrewSheet()`, seule visible en `@media print` (`src/input.css`)
 
 ### Sélection partageable
 `saveSelection()` / `restoreSelection()` : `?dept=…&commune=…&reseau=…` dans l'URL (lien partageable) + dernière sélection en localStorage (`eau-brasseur:selection`).

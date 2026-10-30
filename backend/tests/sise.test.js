@@ -49,9 +49,14 @@ after(() => {
     fs.rmSync(process.env.SISE_DATA_DIR, { recursive: true, force: true });
 });
 
-test("import : seuls les paramètres brassage sont conservés", () => {
+test("import : seuls les paramètres brassage et qualité sont conservés", () => {
     assert.equal(stats.totalComUdi, 3);
-    assert.equal(stats.totalResult, 4); // nitrates (1340) écartés
+    assert.equal(stats.totalResult, 6); // conductivité (1303) écartée
+});
+
+test('resultats : paramètres qualité (chlore libre) disponibles', async () => {
+    const { body } = await get('/api/sise/resultats?code_reseau=009001053&code_parametre=1398,1340');
+    assert.deepEqual(body.data.map(r => [r.code_parametre, r.resultat_numerique]).sort(), [['1340', 2], ['1398', 0.1]]);
 });
 
 test('communes_udi : réseaux de la commune, guillemets nettoyés, cache 1 h', async () => {
@@ -99,7 +104,7 @@ test('resultats : paramètres invalides refusés', async () => {
 test('health : statut ok et nombre de résultats', async () => {
     const { body } = await get('/api/sise/health');
     assert.equal(body.status, 'ok');
-    assert.equal(body.record_count, 4);
+    assert.equal(body.record_count, 6);
     assert.equal(body.syncing, false);
 });
 

@@ -180,3 +180,84 @@ test('sélection : codes mal formés rejetés', () => {
         { dept: '09', commune: '09122' }
     );
 });
+
+// --- Alertes qualité ---
+
+const qualityGroups = (measures) => w.groupByParameter(
+    measures.map(([code, value, isoDate]) => analysis(code, value, isoDate || '2026-08-27')),
+    w.QUALITY_PARAMETERS
+);
+
+test('qualité : chlore libre seul → conseil Campden ou dégazage', () => {
+    const [chlore] = w.assessWaterQuality(qualityGroups([['1398', 0.1], ['1399', 0.15]]));
+    assert.equal(chlore.title, 'Chlore');
+    assert.equal(chlore.level, 'vigilance');
+    assert.match(chlore.message, /Campden/);
+    assert.match(chlore.message, /dégazage une nuit/);
+    assert.equal(chlore.display, 'libre 0,1 / total 0,15 mg/L');
+});
+
+test('qualité : chloramines quand le chlore total dépasse nettement le libre', () => {
+    const [chlore] = w.assessWaterQuality(qualityGroups([['1398', 0.1], ['1399', 0.4]]));
+    assert.match(chlore.message, /Chloramines/);
+    assert.match(chlore.message, /ne suffisent pas/);
+});
+
+test('qualité : chlore non détecté → aucun traitement', () => {
+    const [chlore] = w.assessWaterQuality(qualityGroups([['1398', 0], ['1399', 0.02]]));
+    assert.equal(chlore.level, 'ok');
+});
+
+test('qualité : seuils fer, manganèse et nitrates', () => {
+    const items = w.assessWaterQuality(qualityGroups([['1393', 250], ['1394', 30], ['1340', 12]]));
+    const level = (title) => items.find(i => i.title === title).level;
+    assert.equal(level('Fer'), 'alerte');
+    assert.equal(level('Manganèse'), 'vigilance');
+    assert.equal(level('Nitrates'), 'ok');
+    assert.equal(items.find(i => i.title === 'Fer').display, '250 µg/L');
+});
+
+test('qualité : paramètre jamais mesuré absent, dernière mesure retenue', () => {
+    const items = w.assessWaterQuality(qualityGroups([['1340', 60, '2025-01-01'], ['1340', 10, '2026-08-01']]));
+    assert.deepEqual(items.map(i => i.title), ['Nitrates']);
+    assert.equal(items[0].level, 'ok');
+    assert.deepEqual(w.assessWaterQuality(qualityGroups([])), []);
+});
+
+// --- Eaux de base ---
+
+test('eaux de base : dernière, moyenne et maximum sur 12 mois', () => {
+    const { parameterGroups } = w.buildParameterGroups([
+        analysis('1374', 20, '2026-08-01'),
+        analysis('1374', 10, '2026-01-01'),
+        analysis('1374', 999, '2025-06-01') // hors fenêtre de 12 mois
+    ]);
+    const waters = w.buildBaseWaters(parameterGroups);
+    assert.equal(waters.derniere['CALCIUM (CA)'], 20);
+    assert.equal(waters.moyenne['CALCIUM (CA)'], 15);
+    assert.equal(waters.maximum['CALCIUM (CA)'], 20);
+    assert.equal(waters.moyenne['SODIUM (NA)'], 0, 'paramètre absent → 0');
+    assert.deepEqual(Object.keys(waters), Object.keys(w.BASE_WATER_MODES));
+});
+
+// --- Export BeerXML ---
+
+test('BeerXML : champs en ppm, texte échappé, pH optionnel', () => {
+    const xml = w.toBeerXmlWaters([
+        { name: 'Robinet <Foix> & Co', liters: 20, water: { 'CALCIUM (CA)': 11.24, 'HCO3': 40.87, 'PH': 7.6 }, notes: 'SISE "2026"' },
+        { name: 'Modifiée', liters: 20, water: { 'CALCIUM (CA)': 94.5 } }
+    ]);
+    assert.match(xml, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<WATERS>/);
+    assert.equal((xml.match(/<WATER>/g) || []).length, 2);
+    assert.match(xml, /<NAME>Robinet &lt;Foix&gt; &amp; Co<\/NAME>/);
+    assert.match(xml, /<NOTES>SISE &quot;2026&quot;<\/NOTES>/);
+    assert.match(xml, /<CALCIUM>11.2<\/CALCIUM>/);
+    assert.match(xml, /<BICARBONATE>40.9<\/BICARBONATE>/);
+    assert.match(xml, /<SULFATE>0<\/SULFATE>/);
+    assert.match(xml, /<PH>7.6<\/PH>/);
+    assert.equal((xml.match(/<PH>/g) || []).length, 1, 'pas de pH pour une eau sans pH');
+    // Balises équilibrées
+    const opened = xml.match(/<([A-Z]+)>/g).length;
+    const closed = xml.match(/<\/([A-Z]+)>/g).length;
+    assert.equal(opened, closed);
+});

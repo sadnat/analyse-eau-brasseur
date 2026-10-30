@@ -56,6 +56,44 @@ const step = async (name, fn) => {
             assert.match(await page.innerText('#profileTable'), /CHLORURES/);
         });
 
+        await step('alertes qualité : chlore mesuré → conseil Campden', async () => {
+            await page.waitForSelector('#qualityAlerts:not(.hidden)');
+            assert.match(await page.innerText('#qualityAlerts'), /Campden/);
+        });
+
+        await step('eau de base : le maximum 12 mois change le calcium de base', async () => {
+            const calcium = () => page.$eval('#baseWaterParams', el => el.innerText.match(/CALCIUM \(CA\):\s*([\d,]+)/)[1]);
+            const last = await calcium();
+            await page.selectOption('#baseWaterMode', 'maximum');
+            assert.notEqual(await calcium(), last);
+            await page.selectOption('#baseWaterMode', 'derniere');
+            assert.equal(await calcium(), last);
+        });
+
+        await step('export BeerXML : fichier avec eau de base et eau modifiée', async () => {
+            const [download] = await Promise.all([page.waitForEvent('download'), page.click('#exportBeerXml')]);
+            assert.equal(download.suggestedFilename(), 'eau-09122-009001053.xml');
+            const xml = require('fs').readFileSync(await download.path(), 'utf8');
+            assert.equal((xml.match(/<WATER>/g) || []).length, 2);
+            assert.match(xml, /<CALCIUM>[\d.]+<\/CALCIUM>/);
+            assert.match(xml, /Modifiée — NEIPA/);
+        });
+
+        await step('fiche imprimable : seule visible à l\'impression, avec réseau et sels', async () => {
+            await page.evaluate(() => { window.print = () => {}; }); // pas de boîte de dialogue en headless
+            await page.click('#printSheet');
+            assert.equal(await page.isVisible('#brewSheet'), false, 'masquée à l\'écran');
+            await page.emulateMedia({ media: 'print' });
+            assert.equal(await page.isVisible('#brewSheet'), true);
+            assert.equal(await page.isVisible('#currentParameters'), false);
+            const text = await page.innerText('#brewSheet');
+            assert.match(text, /FOIX CENTRE VILLE/);
+            assert.match(text, /Chlorure de calcium/);
+            assert.match(text, /Campden/);
+            await page.pdf({ path: '/tmp/fiche.pdf' }).catch(() => {});
+            await page.emulateMedia({ media: 'screen' });
+        });
+
         await step('changement rapide de réseau : le dernier clic gagne', async () => {
             const racePage = await newPage();
             // Réponses du premier réseau retardées pour provoquer la course

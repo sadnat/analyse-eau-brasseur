@@ -1,7 +1,7 @@
 const { parse } = require('csv-parse');
 const unzipper = require('unzipper');
 
-// Codes SANDRE des parametres d'interet pour le brassage
+// Codes SANDRE des parametres d'interet pour le brassage et des alertes qualite
 const PARAM_CODES = new Set([
     '1374', // Calcium
     '1372', // Magnesium
@@ -11,7 +11,13 @@ const PARAM_CODES = new Set([
     '1367', // Potassium
     '1302', // pH
     '1347', // TAC
-    '1327'  // HCO3 (Bicarbonates)
+    '1327', // HCO3 (Bicarbonates)
+    // Qualite pour le brassage (alertes)
+    '1398', // Chlore libre
+    '1399', // Chlore total
+    '1340', // Nitrates
+    '1393', // Fer total (µg/L)
+    '1394'  // Manganese total (µg/L)
 ]);
 
 // Nombre de lignes inserees par transaction
@@ -131,7 +137,7 @@ async function importZipToDb(zipPath, db) {
             ];
         });
     }
-    console.log(`[sync] RESULT: ${totalResult} enregistrements (parametres brassage uniquement)`);
+    console.log(`[sync] RESULT: ${totalResult} enregistrements (parametres brassage et qualite)`);
 
     return { totalComUdi, totalPlv, totalResult };
 }

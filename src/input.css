@@ -254,3 +254,71 @@ body {
             #ee9b00,
             #0a9396);
 }
+
+/* Fiche de brassage : masquée à l'écran, seule visible à l'impression */
+.brew-sheet {
+    display: none;
+}
+
+@media print {
+    @page {
+        margin: 15mm;
+    }
+
+    body {
+        background: #fff !important;
+        color: #000 !important;
+    }
+
+    /* Halos décoratifs du fond */
+    body::before,
+    body::after {
+        display: none !important;
+    }
+
+    body > *:not(#brewSheet) {
+        display: none !important;
+    }
+
+    .brew-sheet {
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 11pt;
+        line-height: 1.4;
+        color: #000;
+    }
+
+    .brew-sheet h1 {
+        font-size: 18pt;
+        font-weight: 700;
+        margin-bottom: 4pt;
+    }
+
+    .brew-sheet h2 {
+        font-size: 13pt;
+        font-weight: 600;
+        margin: 14pt 0 6pt;
+        border-bottom: 1px solid #000;
+    }
+
+    .brew-sheet p {
+        margin: 2pt 0;
+    }
+
+    .brew-sheet table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .brew-sheet th,
+    .brew-sheet td {
+        border: 1px solid #999;
+        padding: 3pt 6pt;
+        text-align: left;
+    }
+
+    .brew-sheet .brew-sheet-meta {
+        color: #444;
+        font-size: 9pt;
+    }
+}

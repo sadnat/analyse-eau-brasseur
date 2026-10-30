@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Application de visualisation des données sur l'eau pour brasseurs",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
     "luxon": "3.4.4",

@@ -140,7 +140,8 @@ const renderBrewingIndicators = (container, water) => {
     ));
 };
 
-// Eau de base courante du calculateur (mise à jour à chaque sélection de réseau)
+// Eaux de base du réseau (dernière, moyenne, maximum) et eau retenue dans le calculateur
+let calculatorBaseWaters = null;
 let calculatorBaseWater = null;
 let calculatorInitialized = false;
 
@@ -186,13 +187,7 @@ const displayCalculatorParameters = (container, water) => {
 // Recalculer et afficher l'eau modifiée à partir des saisies
 const updateCalculations = () => {
     if (!calculatorBaseWater) return;
-    const waterQuantity = document.getElementById('waterQuantity').value;
-    const additions = {};
-    MINERAL_INPUT_IDS.forEach(id => {
-        additions[id] = parseFloat(document.getElementById(id).value) || 0;
-    });
-
-    const modifiedWater = calculateMineralAdditions(calculatorBaseWater, additions, waterQuantity);
+    const { modifiedWater } = readCalculatorState();
     displayCalculatorParameters(document.getElementById('modifiedWaterParams'), modifiedWater);
     renderBrewingIndicators(document.getElementById('modifiedIndicators'), modifiedWater);
     renderProfileComparison(modifiedWater);
@@ -294,6 +289,162 @@ const applySuggestedAdditions = () => {
     updateCalculations();
 };
 
+// Saisies courantes du calculateur et eau modifiée correspondante
+const readCalculatorState = () => {
+    const liters = parseFloat(document.getElementById('waterQuantity').value);
+    const additions = {};
+    MINERAL_INPUT_IDS.forEach(id => {
+        additions[id] = parseFloat(document.getElementById(id).value) || 0;
+    });
+    const modeSelect = document.getElementById('baseWaterMode');
+    return {
+        liters,
+        additions,
+        mode: BASE_WATER_MODES[modeSelect ? modeSelect.value : 'derniere'],
+        profile: getSelectedProfile(),
+        baseWater: calculatorBaseWater,
+        modifiedWater: calculateMineralAdditions(calculatorBaseWater, additions, liters)
+    };
+};
+
+// Commune et réseau sélectionnés (codes et libellés)
+const readSelectionLabels = () => {
+    const communeSelect = document.getElementById('communeSelect');
+    const networkButton = document.querySelector('#networkButtons button.bg-sky-600');
+    return {
+        communeCode: communeSelect.value,
+        communeName: communeSelect.selectedOptions[0] ? communeSelect.selectedOptions[0].textContent : '',
+        networkCode: networkButton ? networkButton.dataset.networkCode : '',
+        networkName: networkButton ? networkButton.textContent : ''
+    };
+};
+
+// Nom d'un sel tel qu'affiché dans le calculateur (libellé + formule)
+const mineralLabel = (id) => {
+    const label = document.querySelector(`label[for="${id}"]`);
+    return label ? label.textContent.replace(/\s+/g, ' ').trim() : id;
+};
+
+// Télécharger l'eau de base et l'eau modifiée au format BeerXML
+const exportBeerXml = () => {
+    if (!calculatorBaseWater) return;
+    const state = readCalculatorState();
+    const selection = readSelectionLabels();
+    const additionsText = MINERAL_INPUT_IDS
+        .filter(id => state.additions[id] > 0)
+        .map(id => `${mineralLabel(id)} : ${formatValue(state.additions[id])} g`)
+        .join(' ; ');
+
+    const xml = toBeerXmlWaters([
+        {
+            name: `Robinet — ${selection.networkName} (${state.mode})`,
+            liters: state.liters,
+            water: state.baseWater,
+            notes: `${selection.communeName} — réseau ${selection.networkCode}. Sources : Hub'Eau / SISE-Eaux.`
+        },
+        {
+            name: `Modifiée — ${state.profile ? state.profile.name : 'sans profil'}`,
+            liters: state.liters,
+            water: state.modifiedWater,
+            notes: `Pour ${formatValue(state.liters)} L. ${additionsText || 'Aucun ajout.'}`
+        }
+    ]);
+
+    const url = URL.createObjectURL(new Blob([xml], { type: 'application/xml' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `eau-${selection.communeCode}-${selection.networkCode}.xml`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+};
+
+// Ajouter un élément texte à un parent (sécurisé contre XSS)
+const appendText = (parent, tag, text, className) => {
+    const el = document.createElement(tag);
+    el.textContent = text;
+    if (className) el.className = className;
+    parent.appendChild(el);
+    return el;
+};
+
+// Ajouter un tableau simple (en-têtes + lignes de texte)
+const appendTable = (parent, headers, rows) => {
+    const table = document.createElement('table');
+    const head = document.createElement('tr');
+    headers.forEach(h => appendText(head, 'th', h));
+    table.appendChild(head);
+    rows.forEach(cells => {
+        const row = document.createElement('tr');
+        cells.forEach(c => appendText(row, 'td', c));
+        table.appendChild(row);
+    });
+    parent.appendChild(table);
+};
+
+// Construire la fiche de brassage imprimable puis lancer l'impression
+const buildBrewSheet = () => {
+    const sheet = document.getElementById('brewSheet');
+    if (!sheet || !calculatorBaseWater || !currentReport) return;
+    const state = readCalculatorState();
+    const selection = readSelectionLabels();
+    const round = (value) => formatValue(Math.round((value || 0) * 10) / 10);
+    const formatDate = (date) => date.setLocale('fr').toLocaleString({ day: 'numeric', month: 'long', year: 'numeric' });
+
+    sheet.innerHTML = '';
+    appendText(sheet, 'h1', 'Fiche eau de brassage');
+    appendText(sheet, 'p', `${selection.communeName} — réseau ${selection.networkName} (${selection.networkCode})`);
+    appendText(sheet, 'p', `Sources : ${currentReport.usedSources.map(s => s.name).join(' + ')}`
+        + (currentReport.latestDate ? ` — dernier prélèvement : ${formatDate(currentReport.latestDate)}` : ''));
+    appendText(sheet, 'p', `Eau de base : ${state.mode} — volume : ${formatValue(state.liters || 0)} L — profil cible : ${state.profile ? state.profile.name : 'aucun'}`);
+
+    appendText(sheet, 'h2', 'Ajouts de sels');
+    const salts = MINERAL_INPUT_IDS.filter(id => state.additions[id] > 0);
+    if (salts.length > 0) {
+        appendTable(sheet, ['Sel', 'Quantité'], salts.map(id => [mineralLabel(id), `${formatValue(state.additions[id])} g`]));
+    } else {
+        appendText(sheet, 'p', 'Aucun ajout.');
+    }
+
+    appendText(sheet, 'h2', 'Composition (mg/L)');
+    appendTable(sheet,
+        ['Paramètre', 'Eau de base', 'Eau modifiée', ...(state.profile ? [`Cible ${state.profile.name}`] : [])],
+        PROFILE_IONS.map(ion => [
+            ion,
+            round(state.baseWater[ion]),
+            round(state.modifiedWater[ion]),
+            ...(state.profile ? [formatValue(state.profile.ions[ion])] : [])
+        ]));
+
+    appendText(sheet, 'h2', 'Indicateurs');
+    const ratio = (water) => {
+        const value = calculateSulfateChlorideRatio(water);
+        return value === null ? '—' : formatValue(Math.round(value * 100) / 100);
+    };
+    appendTable(sheet, ['Indicateur', 'Eau de base', 'Eau modifiée'], [
+        ['Alcalinité résiduelle (mg/L CaCO₃)',
+            formatValue(Math.round(calculateResidualAlkalinity(state.baseWater))),
+            formatValue(Math.round(calculateResidualAlkalinity(state.modifiedWater)))],
+        ['Ratio SO₄ / Cl', ratio(state.baseWater), ratio(state.modifiedWater)]
+    ]);
+
+    if (currentReport.qualityItems.length > 0) {
+        appendText(sheet, 'h2', 'Qualité de l\'eau');
+        currentReport.qualityItems.forEach(item => {
+            appendText(sheet, 'p', `${item.title} (${item.display}, ${formatDate(item.date)}) : ${item.message}`);
+        });
+    }
+
+    appendText(sheet, 'p', `Lien : ${window.location.href}`, 'brew-sheet-meta');
+    appendText(sheet, 'p', `Édité le ${formatDate(luxon.DateTime.now())} — valeurs indicatives, à vérifier avant brassage.`, 'brew-sheet-meta');
+};
+
+const printBrewSheet = () => {
+    buildBrewSheet();
+    window.print();
+};
+
 // Rafraîchir l'affichage complet du calculateur (eau de base + eau modifiée)
 const renderCalculator = () => {
     if (!calculatorBaseWater) return;
@@ -340,6 +491,23 @@ function initializeCalculator() {
         suggestButton.addEventListener('click', applySuggestedAdditions);
     }
 
+    // Eau de base : dernière mesure, moyenne ou maximum sur 12 mois
+    const baseWaterMode = document.getElementById('baseWaterMode');
+    if (baseWaterMode) {
+        baseWaterMode.addEventListener('change', () => {
+            if (!calculatorBaseWaters) return;
+            calculatorBaseWater = calculatorBaseWaters[baseWaterMode.value];
+            solverNote = '';
+            renderCalculator();
+        });
+    }
+
+    // Export et fiche imprimable
+    const exportButton = document.getElementById('exportBeerXml');
+    if (exportButton) exportButton.addEventListener('click', exportBeerXml);
+    const printButton = document.getElementById('printSheet');
+    if (printButton) printButton.addEventListener('click', printBrewSheet);
+
     ['waterQuantity', ...MINERAL_INPUT_IDS].forEach(id => {
         const input = document.getElementById(id);
         if (input) {
@@ -350,9 +518,11 @@ function initializeCalculator() {
     calculatorInitialized = true;
 }
 
-// Mettre à jour l'eau de base du calculateur
-function updateCalculator(baseWater) {
-    calculatorBaseWater = baseWater;
+// Mettre à jour les eaux de base du calculateur ({ derniere, moyenne, maximum })
+function updateCalculator(baseWaters) {
+    calculatorBaseWaters = baseWaters;
+    const baseWaterMode = document.getElementById('baseWaterMode');
+    calculatorBaseWater = baseWaters[baseWaterMode ? baseWaterMode.value : 'derniere'];
     initializeCalculator();
 
     const waterCalculator = document.getElementById('waterCalculator');
@@ -621,7 +791,8 @@ const loadNetworkAnalyses = async (networkCode) => {
         setLoading(true);
         hideError();
 
-        const paramCodes = Object.values(PARAMETERS_OF_INTEREST).map(p => p.code).join(',');
+        const paramCodes = [...Object.values(PARAMETERS_OF_INTEREST), ...Object.values(QUALITY_PARAMETERS)]
+            .map(p => p.code).join(',');
 
         // Lancer les deux requêtes en parallèle
         const hasSise = await checkSiseBackend();
@@ -702,18 +873,41 @@ const displayNetworks = (networks) => {
     }
 };
 
-// Formater une valeur numérique à la française (2 décimales max)
-const formatValue = (value) => value.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
-
 // Affichage des analyses fusionnées
+// Synthèse du réseau affiché, reprise par la fiche de brassage
+let currentReport = null;
+
 const displayAnalyses = (analyses) => {
     const { parameterGroups, labels } = buildParameterGroups(analyses);
+    const qualityItems = assessWaterQuality(groupByParameter(analyses, QUALITY_PARAMETERS));
 
     // Sources ayant réellement fourni des mesures
     const usedSources = [...new Set(analyses.map(a => a.source))];
+    const latestDate = Object.values(parameterGroups)
+        .filter(group => group.length > 0)
+        .reduce((latest, group) => (!latest || group[0].date > latest ? group[0].date : latest), null);
+    currentReport = { usedSources, latestDate, qualityItems };
 
     displayCurrentValues(parameterGroups, labels, usedSources);
+    displayQualityAlerts(qualityItems);
     displayCharts(parameterGroups, labels);
+};
+
+// Alertes qualité (chlore, nitrates, fer, manganèse) ; section masquée si rien n'est mesuré
+const displayQualityAlerts = (items) => {
+    const section = document.getElementById('qualityAlerts');
+    if (!section) return;
+    const grid = section.querySelector('.grid');
+    grid.innerHTML = '';
+    items.forEach(item => {
+        const date = item.date.setLocale('fr').toLocaleString({ day: 'numeric', month: 'short', year: 'numeric' });
+        grid.appendChild(createIndicatorTile(
+            `${item.title} — ${date}`,
+            item.display,
+            { text: item.message, color: QUALITY_LEVEL_COLORS[item.level] }
+        ));
+    });
+    section.classList.toggle('hidden', items.length === 0);
 };
 
 // Créer un badge source pour une carte paramètre
@@ -792,11 +986,9 @@ const displayCurrentValues = (parameterGroups, labels, usedSources) => {
     if (!grid) return;
     grid.innerHTML = '';
 
-    const currentValues = {};
     Object.entries(parameterGroups).forEach(([name, analyses]) => {
         if (analyses.length === 0) return;
         grid.appendChild(createParameterCard(name, labels[name], analyses));
-        currentValues[name] = analyses[0].value;
     });
 
     container.classList.remove('hidden');
@@ -804,19 +996,14 @@ const displayCurrentValues = (parameterGroups, labels, usedSources) => {
     // Bandeau global de source et fraîcheur des données
     displayDataSourceBanner(parameterGroups, usedSources);
 
-    // S'assurer que toutes les valeurs sont définies avant de les passer au calculateur
-    Object.keys(PARAMETERS_OF_INTEREST).forEach(key => {
-        if (!(key in currentValues)) {
-            currentValues[key] = 0;
-        }
-    });
+    // Eaux de base du calculateur (paramètres absents à 0)
+    const baseWaters = buildBaseWaters(parameterGroups);
+    updateCalculator(baseWaters);
 
-    updateCalculator(currentValues);
-
-    // Indicateurs brassicoles de l'eau du réseau
+    // Indicateurs brassicoles de l'eau du réseau (dernière mesure)
     const brewingIndicators = document.getElementById('brewingIndicators');
     if (brewingIndicators) {
-        renderBrewingIndicators(brewingIndicators.querySelector('.grid'), currentValues);
+        renderBrewingIndicators(brewingIndicators.querySelector('.grid'), baseWaters.derniere);
         brewingIndicators.classList.remove('hidden');
     }
 };

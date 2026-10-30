@@ -279,13 +279,7 @@ const getDataFreshnessInfo = (latestDate) => {
 // Regrouper les analyses par paramètre (de la plus récente à la plus ancienne)
 // et déterminer le libellé affiché de chaque paramètre
 const buildParameterGroups = (analyses) => {
-    // Regrouper les analyses par paramètre, de la plus récente à la plus ancienne
-    const parameterGroups = {};
-    Object.entries(PARAMETERS_OF_INTEREST).forEach(([name, info]) => {
-        parameterGroups[name] = analyses
-            .filter(a => a.code_parametre === info.code)
-            .sort((a, b) => b.date - a.date);
-    });
+    const parameterGroups = groupByParameter(analyses, PARAMETERS_OF_INTEREST);
 
     // HCO3 : mesuré (code 1327) environ une fois par an, complété par le calcul depuis le TAC (mensuel)
     // pour les jours sans mesure directe
@@ -303,6 +297,150 @@ const buildParameterGroups = (analyses) => {
     }
 
     return { parameterGroups, labels };
+};
+
+// Paramètres de qualité utiles au brasseur (alertes, sans graphique)
+const QUALITY_PARAMETERS = {
+    'CHLORE LIBRE': { code: '1398', unit: 'mg/L Cl₂' },
+    'CHLORE TOTAL': { code: '1399', unit: 'mg/L Cl₂' },
+    'NITRATES': { code: '1340', unit: 'mg/L' },
+    'FER': { code: '1393', unit: 'µg/L' },
+    'MANGANESE': { code: '1394', unit: 'µg/L' }
+};
+
+// Formater une valeur numérique à la française (2 décimales max)
+const formatValue = (value) => value.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+
+// Regrouper les analyses par paramètre d'une table (de la plus récente à la plus ancienne)
+const groupByParameter = (analyses, parameters) => {
+    const groups = {};
+    Object.entries(parameters).forEach(([name, info]) => {
+        groups[name] = analyses
+            .filter(a => a.code_parametre === info.code)
+            .sort((a, b) => b.date - a.date);
+    });
+    return groups;
+};
+
+// Niveaux d'alerte → couleur (classes Tailwind complètes pour la compilation)
+const QUALITY_LEVEL_COLORS = { ok: 'text-emerald-400', vigilance: 'text-amber-400', alerte: 'text-red-400' };
+
+// Seuil au-dessus duquel le chlore est considéré présent (mg/L Cl2)
+const CHLORINE_THRESHOLD = 0.05;
+
+// Évaluer la qualité de l'eau pour le brassage à partir des dernières mesures.
+// Un paramètre jamais mesuré n'apparaît pas (pas de faux « OK »).
+const assessWaterQuality = (qualityGroups) => {
+    const latest = (name) => (qualityGroups[name] && qualityGroups[name][0]) || null;
+    const items = [];
+
+    // Chlore : libre et total regroupés ; un écart total − libre signale des chloramines
+    const free = latest('CHLORE LIBRE');
+    const total = latest('CHLORE TOTAL');
+    if (free || total) {
+        const reference = total || free;
+        const display = [free && `libre ${formatValue(free.value)}`, total && `total ${formatValue(total.value)}`]
+            .filter(Boolean).join(' / ') + ' mg/L';
+        let level = 'ok';
+        let message = 'Chlore non détecté : aucun traitement nécessaire.';
+        if (reference.value >= CHLORINE_THRESHOLD) {
+            level = 'vigilance';
+            const combined = free && total ? total.value - free.value : 0;
+            message = combined >= 0.1
+                ? `Chloramines probables (chlore combiné ${formatValue(Math.round(combined * 100) / 100)} mg/L) : l'ébullition ou le dégazage ne suffisent pas. 1 comprimé de Campden (métabisulfite) pour ~75 L, quelques minutes avant usage.`
+                : 'Risque de chlorophénols (goût médicamenteux) : 1 comprimé de Campden (métabisulfite) pour ~75 L, ou dégazage une nuit à l\'air libre.';
+        }
+        items.push({ title: 'Chlore', display, date: reference.date, level, message });
+    }
+
+    // Paramètres à seuils simples : [nom, titre, seuil vigilance, seuil alerte, messages]
+    const thresholds = [
+        ['NITRATES', 'Nitrates', 25, 50, {
+            ok: 'Teneur faible.',
+            vigilance: 'Teneur élevée (> 25 mg/L), à surveiller.',
+            alerte: 'Dépasse la limite de potabilité (50 mg/L) : utilisez une autre eau.'
+        }],
+        ['FER', 'Fer', 100, 200, {
+            ok: 'Pas d\'impact attendu.',
+            vigilance: 'Peut donner un goût métallique.',
+            alerte: 'Goût métallique et trouble possibles, gêne la levure : filtrez ou utilisez une autre eau.'
+        }],
+        ['MANGANESE', 'Manganèse', 20, 50, {
+            ok: 'Pas d\'impact attendu.',
+            vigilance: 'Peut donner un goût métallique.',
+            alerte: 'Dépasse la référence de qualité (50 µg/L) : goût métallique probable.'
+        }]
+    ];
+    thresholds.forEach(([name, title, warn, alert, messages]) => {
+        const measure = latest(name);
+        if (!measure) return;
+        const level = measure.value > alert ? 'alerte' : measure.value > warn ? 'vigilance' : 'ok';
+        items.push({
+            title,
+            display: `${formatValue(measure.value)} ${QUALITY_PARAMETERS[name].unit}`,
+            date: measure.date,
+            level,
+            message: messages[level]
+        });
+    });
+
+    return items;
+};
+
+// Modes d'eau de base du calculateur
+const BASE_WATER_MODES = {
+    derniere: 'Dernière mesure',
+    moyenne: 'Moyenne 12 mois',
+    maximum: 'Maximum 12 mois'
+};
+
+// Eaux de base possibles : dernière mesure, moyenne et maximum sur les 12 mois précédant la dernière mesure
+const buildBaseWaters = (parameterGroups) => {
+    const waters = { derniere: {}, moyenne: {}, maximum: {} };
+    Object.keys(PARAMETERS_OF_INTEREST).forEach(name => {
+        const analyses = parameterGroups[name] || [];
+        if (analyses.length === 0) {
+            waters.derniere[name] = waters.moyenne[name] = waters.maximum[name] = 0;
+            return;
+        }
+        const stats = computeYearStats(analyses);
+        waters.derniere[name] = analyses[0].value;
+        waters.moyenne[name] = stats.avg;
+        waters.maximum[name] = stats.max;
+    });
+    return waters;
+};
+
+// Échapper un texte pour XML
+const escapeXml = (text) => String(text).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+})[c]);
+
+// Correspondance champs BeerXML 1.0 (<WATER>, en ppm) → paramètres
+const BEERXML_FIELDS = {
+    CALCIUM: 'CALCIUM (CA)',
+    BICARBONATE: 'HCO3',
+    SULFATE: 'SULFATES (SO4)',
+    CHLORIDE: 'CHLORURES',
+    SODIUM: 'SODIUM (NA)',
+    MAGNESIUM: 'MAGNESIUM (MG)'
+};
+
+// Exporter des eaux au format BeerXML : [{ name, liters, water, notes }]
+const toBeerXmlWaters = (entries) => {
+    const round = (value) => Math.round((value || 0) * 10) / 10;
+    const records = entries.map(({ name, liters, water, notes }) => {
+        const lines = [
+            `<NAME>${escapeXml(name)}</NAME>`,
+            '<VERSION>1</VERSION>',
+            `<AMOUNT>${round(liters)}</AMOUNT>`,
+            ...Object.entries(BEERXML_FIELDS).map(([field, key]) => `<${field}>${round(water[key])}</${field}>`)
+        ];
+        if (water['PH'] > 0) lines.push(`<PH>${round(water['PH'])}</PH>`);
+        if (notes) lines.push(`<NOTES>${escapeXml(notes)}</NOTES>`);
+        return `  <WATER>\n${lines.map(l => '    ' + l).join('\n')}\n  </WATER>`;
+    });
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<WATERS>\n${records.join('\n')}\n</WATERS>\n`;
 };
 
 // Clé de tri des départements (Corse : 2A et 2B se placent entre 19 et 21)
@@ -334,6 +472,15 @@ if (typeof module !== 'undefined') {
         computeYearStats,
         getDataFreshnessInfo,
         buildParameterGroups,
-        departementSortKey
+        departementSortKey,
+        QUALITY_PARAMETERS,
+        formatValue,
+        groupByParameter,
+        QUALITY_LEVEL_COLORS,
+        assessWaterQuality,
+        BASE_WATER_MODES,
+        buildBaseWaters,
+        escapeXml,
+        toBeerXmlWaters
     };
 }
