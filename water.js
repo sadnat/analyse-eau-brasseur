@@ -289,11 +289,58 @@ const solveMineralAdditions = (baseWater, targetIons, liters, { acid = null } = 
 
     // Conversion par litre → quantité pour le volume
     const amounts = {};
-    variables.forEach((salt, j) => {
-        const precision = SUGGESTION_PRECISION[salt] || 10;
-        amounts[salt] = Math.round(x[j] * liters * precision) / precision;
-    });
+    variables.forEach((salt, j) => { amounts[salt] = roundAddition(salt, x[j] * liters); });
     return amounts;
+};
+
+// Arrondi d'une quantité au pas pratique de pesée ou de dosage
+const roundAddition = (id, value) => {
+    const precision = SUGGESTION_PRECISION[id] || 10;
+    return Math.round(value * precision) / precision;
+};
+
+// --- Eau d'empâtage et eau de rinçage ---
+
+// Mélange de plusieurs eaux : moyenne des concentrations pondérée par les volumes
+const combineWaters = (parts) => {
+    const used = parts.filter(part => part.liters > 0);
+    if (used.length === 0) return { ...(parts[0] ? parts[0].water : {}) };
+    const total = used.reduce((sum, part) => sum + part.liters, 0);
+    const keys = new Set(used.flatMap(part => Object.keys(part.water)));
+    const result = {};
+    keys.forEach(key => {
+        result[key] = used.reduce((sum, part) => sum + (part.water[key] || 0) * part.liters, 0) / total;
+    });
+    return result;
+};
+
+// Répartition des ajouts suggérés (calculés pour le volume total) entre empâtage et rinçage
+const SPLIT_MODES = {
+    proportionnel: 'Proportionnelle aux volumes',
+    empatage: 'Tout dans l\'empâtage'
+};
+const splitAdditions = (amounts, mashLiters, spargeLiters, mode = 'proportionnel') => {
+    const mash = {};
+    const sparge = {};
+    const total = mashLiters + spargeLiters;
+    Object.entries(amounts).forEach(([id, amount]) => {
+        if (mode === 'empatage' || !(spargeLiters > 0) || !(total > 0)) {
+            mash[id] = amount;
+            sparge[id] = 0;
+        } else {
+            mash[id] = roundAddition(id, amount * mashLiters / total);
+            sparge[id] = roundAddition(id, amount * spargeLiters / total);
+        }
+    });
+    return { mash, sparge };
+};
+
+// Eau de rinçage : on neutralise ~90 % de l'alcalinité (pH ≈ 5,5–6) pour limiter l'extraction de tanins
+const SPARGE_NEUTRALIZATION = 0.9;
+const spargeAcidAmount = (water, liters, acidId, fraction = SPARGE_NEUTRALIZATION) => {
+    if (!ACIDS[acidId] || !(liters > 0)) return 0;
+    const meq = (water['HCO3'] || 0) / HCO3_MG_PER_MEQ * fraction * liters;
+    return roundAddition(acidId, meq / ACIDS[acidId].meqPerMl);
 };
 
 // Calcul du HCO3 à partir du TAC
@@ -675,6 +722,12 @@ if (typeof module !== 'undefined') {
         profileDeviation,
         ACIDS,
         LACTATE_TASTE_THRESHOLD,
-        acidEffect
+        acidEffect,
+        roundAddition,
+        combineWaters,
+        SPLIT_MODES,
+        splitAdditions,
+        SPARGE_NEUTRALIZATION,
+        spargeAcidAmount
     };
 }

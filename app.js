@@ -467,15 +467,38 @@ const MINERAL_INPUT_IDS = SALTS.map(salt => salt.id);
 const SALT_UNITS = Object.fromEntries(SALTS.map(salt => [salt.id, salt.unit || 'g']));
 const SALT_STEP = 0.1;
 
-// Champs de sels avec boutons −/+ (générés une seule fois)
-const renderSaltInputs = () => {
-    const saltsGrid = document.getElementById('saltInputs');
-    const acidsGrid = document.getElementById('acidInputs');
+// --- Deux eaux : empâtage et rinçage ---
+
+// Eau dont on saisit les ajouts, et eau affichée dans le panneau (empâtage, rinçage ou ébullition)
+let editedWater = 'mash';
+let panelView = 'kettle';
+const WATER_LABELS = { mash: 'Empâtage', sparge: 'Rinçage', kettle: 'Ébullition' };
+const PANEL_VIEW_HINTS = {
+    mash: 'Eau d\'empâtage : elle fixe le pH de la maische (alcalinité résiduelle, calcium).',
+    sparge: 'Eau de rinçage : visez une alcalinité faible pour limiter l\'extraction de tanins.',
+    kettle: 'Mélange des deux eaux dans la cuve d\'ébullition : c\'est ce profil qui donne le goût, à comparer à la cible.'
+};
+
+// Identifiant du champ d'un ajout pour une eau (les champs d'empâtage gardent l'identifiant simple)
+const additionInputId = (water, id) => (water === 'mash' ? id : `sparge-${id}`);
+
+// Champs d'ajouts avec boutons −/+ pour une eau (générés une seule fois)
+const renderAdditionInputs = (water) => {
+    const container = document.getElementById(water === 'mash' ? 'mashAdditions' : 'spargeAdditions');
+    const saltsGrid = document.createElement('div');
+    saltsGrid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-4';
+    const acidsTitle = document.createElement('h4');
+    acidsTitle.className = 'mt-6 mb-3 text-sm font-semibold text-slate-300';
+    acidsTitle.textContent = 'Acides (en mL)';
+    const acidsGrid = document.createElement('div');
+    acidsGrid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-4';
+    const suffix = water === 'mash' ? '' : ' (rinçage)';
+
     SALTS.forEach(salt => {
-        const container = salt.acid ? acidsGrid : saltsGrid;
+        const id = additionInputId(water, salt.id);
         const field = document.createElement('div');
         const label = document.createElement('label');
-        label.htmlFor = salt.id;
+        label.htmlFor = id;
         label.className = 'block text-sm font-medium text-slate-200 mb-2';
         label.textContent = `${salt.name} `;
         const formula = document.createElement('span');
@@ -487,7 +510,7 @@ const renderSaltInputs = () => {
         row.className = 'flex items-stretch rounded-xl border border-slate-600 bg-slate-900/60 focus-within:ring-2 focus-within:ring-sky-500/60';
         const input = document.createElement('input');
         input.type = 'number';
-        input.id = salt.id;
+        input.id = id;
         input.value = '0';
         input.min = '0';
         const step = salt.step || SALT_STEP;
@@ -500,7 +523,7 @@ const renderSaltInputs = () => {
             button.type = 'button';
             button.className = 'w-11 shrink-0 text-lg text-slate-300 hover:text-white hover:bg-slate-700/60 focus:outline-none focus-visible:bg-slate-700';
             button.textContent = symbol;
-            button.setAttribute('aria-label', `${action} ${salt.name} de ${formatValue(step)} ${unitLabel}`);
+            button.setAttribute('aria-label', `${action}${suffix} ${salt.name} de ${formatValue(step)} ${unitLabel}`);
             button.addEventListener('click', () => {
                 const next = Math.max(0, Math.round(((parseFloat(input.value) || 0) + delta) * 10) / 10);
                 input.value = String(next);
@@ -516,9 +539,23 @@ const renderSaltInputs = () => {
         input.addEventListener('input', updateCalculations);
 
         field.append(label, row);
-        container.appendChild(field);
+        (salt.acid ? acidsGrid : saltsGrid).appendChild(field);
+    });
+    container.append(saltsGrid, acidsTitle, acidsGrid);
+};
+
+// Lire les ajouts saisis pour une eau
+const readAdditions = (water) => Object.fromEntries(MINERAL_INPUT_IDS.map(id =>
+    [id, parseFloat(document.getElementById(additionInputId(water, id)).value) || 0]));
+
+// Remplir les ajouts d'une eau
+const writeAdditions = (water, amounts) => {
+    MINERAL_INPUT_IDS.forEach(id => {
+        document.getElementById(additionInputId(water, id)).value = String(amounts[id] || 0);
     });
 };
+
+const readVolume = (id) => Math.max(parseFloat(document.getElementById(id).value) || 0, 0);
 
 // Couleur de la barre « après ajouts » selon l'écart à la cible (neutre sans profil)
 const DEVIATION_BAR_COLORS = { ok: 'bg-emerald-400', proche: 'bg-amber-400', loin: 'bg-red-400' };
@@ -585,7 +622,7 @@ const renderSummaryBar = (water) => {
     const bar = document.getElementById('calcSummaryBar');
     const ratio = calculateSulfateChlorideRatio(water);
     const fmt = (v) => formatValue(Math.round(v || 0));
-    bar.textContent = `Ca ${fmt(water['CALCIUM (CA)'])} · SO₄ ${fmt(water['SULFATES (SO4)'])} · Cl ${fmt(water['CHLORURES'])} mg/L`
+    bar.textContent = `${WATER_LABELS[panelView]} : Ca ${fmt(water['CALCIUM (CA)'])} · SO₄ ${fmt(water['SULFATES (SO4)'])} · Cl ${fmt(water['CHLORURES'])} mg/L`
         + (ratio === null ? '' : ` · SO₄/Cl ${formatValue(Math.round(ratio * 100) / 100)}`);
 };
 
@@ -593,7 +630,9 @@ const renderSummaryBar = (water) => {
 const renderAcidHint = (state) => {
     const hint = document.getElementById('acidHint');
     const fmt = (v) => formatValue(Math.round(v));
-    const acidIds = Object.keys(ACIDS).filter(id => state.additions[id] > 0);
+    const additions = editedWater === 'mash' ? state.mashAdditions : state.spargeAdditions;
+    const liters = editedWater === 'mash' ? state.mashLiters : state.spargeLiters;
+    const acidIds = Object.keys(ACIDS).filter(id => additions[id] > 0);
     hint.innerHTML = '';
     const line = (text, className = 'text-slate-400') => appendText(hint, 'p', text, className);
     if (acidIds.length === 0) {
@@ -602,17 +641,18 @@ const renderAcidHint = (state) => {
         return;
     }
     // Alcalinité disponible : eau de base + bicarbonates éventuellement ajoutés (avant acides)
-    const withoutAcid = { ...state.additions };
+    const withoutAcid = { ...additions };
     acidIds.forEach(id => { withoutAcid[id] = 0; });
-    const available = calculateMineralAdditions(state.baseWater, withoutAcid, state.liters)['HCO3'];
-    const { neutralized, excess } = acidEffect(state.additions, state.liters, available);
+    const available = calculateMineralAdditions(state.baseWater, withoutAcid, liters)['HCO3'];
+    const { neutralized, excess } = acidEffect(additions, liters, available);
+    const where = editedWater === 'mash' ? 'de la maische' : 'de l\'eau de rinçage';
     if (excess > 1) {
-        line(`Toute l'alcalinité est neutralisée (${fmt(neutralized)} mg/L CaCO₃) ; l'excès d'acide (${fmt(excess)} mg/L CaCO₃) abaissera directement le pH de la maische.`, 'text-amber-300');
+        line(`${WATER_LABELS[editedWater]} : toute l'alcalinité est neutralisée (${fmt(neutralized)} mg/L CaCO₃) ; l'excès d'acide (${fmt(excess)} mg/L CaCO₃) abaissera directement le pH ${where}.`, 'text-amber-300');
     } else {
-        line(`Les acides neutralisent ${fmt(neutralized)} mg/L CaCO₃ d'alcalinité, sur ${fmt(available / 61.02 * 50.04)} disponibles.`);
+        line(`${WATER_LABELS[editedWater]} : les acides neutralisent ${fmt(neutralized)} mg/L CaCO₃ d'alcalinité, sur ${fmt(available / 61.02 * 50.04)} disponibles.`);
     }
     // Lactate : goût acidulé au-delà du seuil de perception
-    const lactate = state.liters > 0 ? (state.additions.lactic80 || 0) * ACIDS.lactic80.lactatePerMl / state.liters : 0;
+    const lactate = liters > 0 ? (additions.lactic80 || 0) * ACIDS.lactic80.lactatePerMl / liters : 0;
     if (lactate > LACTATE_TASTE_THRESHOLD) {
         line(`Lactate ${fmt(lactate)} mg/L : au-delà de ~${LACTATE_TASTE_THRESHOLD} mg/L, un goût acidulé peut apparaître.`, 'text-amber-300');
     }
@@ -621,7 +661,28 @@ const renderAcidHint = (state) => {
 // Recalculer et afficher l'eau modifiée à partir des saisies
 const updateCalculations = () => {
     if (!calculatorBaseWater) return;
+    const hasSparge = readVolume('spargeVolume') > 0;
+    // Sans rinçage (BIAB) : seule l'eau d'empâtage existe
+    if (!hasSparge && editedWater === 'sparge') editedWater = 'mash';
+    if (!hasSparge && panelView === 'sparge') panelView = 'kettle';
     const state = readCalculatorState();
+
+    document.querySelectorAll('#waterToggle button').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.water === editedWater));
+        if (button.dataset.water === 'sparge') button.disabled = !hasSparge;
+    });
+    document.getElementById('mashAdditions').classList.toggle('hidden', editedWater !== 'mash');
+    document.getElementById('spargeAdditions').classList.toggle('hidden', editedWater !== 'sparge');
+    document.getElementById('acidifySparge').disabled = !document.getElementById('solverAcid').value;
+    document.querySelectorAll('#panelView button').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.view === panelView));
+        if (button.dataset.view === 'sparge') button.disabled = !hasSparge;
+    });
+    document.getElementById('panelViewHint').textContent = PANEL_VIEW_HINTS[panelView];
+    document.getElementById('volumeSummary').textContent = hasSparge
+        ? `Total : ${formatValue(state.totalLiters)} L dans la cuve d'ébullition.`
+        : 'Sans rinçage (BIAB) : toute l\'eau sert à l\'empâtage.';
+
     renderIonBars(state);
     // Légende : couleurs d'écart seulement quand un profil cible est choisi
     document.getElementById('legendNeutral').classList.toggle('hidden', Boolean(state.profile));
@@ -646,17 +707,19 @@ let solverNote = '';
 // Remplir les champs avec les ajouts suggérés pour le profil sélectionné
 const applySuggestedAdditions = () => {
     const profile = getSelectedProfile();
-    const liters = parseFloat(document.getElementById('waterQuantity').value);
-    if (!profile || !calculatorBaseWater || !(liters > 0)) return;
+    const mashLiters = readVolume('mashVolume');
+    const spargeLiters = readVolume('spargeVolume');
+    if (!profile || !calculatorBaseWater || !(mashLiters > 0)) return;
 
+    // Suggestion pour l'ensemble de l'eau, puis répartition entre empâtage et rinçage
     const acid = document.getElementById('solverAcid').value || null;
-    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters, { acid });
-    MINERAL_INPUT_IDS.forEach(id => {
-        document.getElementById(id).value = grams[id] || 0;
-    });
+    const amounts = solveMineralAdditions(calculatorBaseWater, profile.ions, mashLiters + spargeLiters, { acid });
+    const { mash, sparge } = splitAdditions(amounts, mashLiters, spargeLiters, document.getElementById('splitMode').value);
+    writeAdditions('mash', mash);
+    writeAdditions('sparge', sparge);
 
-    // Signaler les ions que les ajouts ne peuvent pas faire baisser
-    const result = calculateMineralAdditions(calculatorBaseWater, grams, liters);
+    // Signaler les ions que les ajouts ne peuvent pas faire baisser (eau d'ébullition)
+    const result = readCalculatorState().waters.kettle;
     const tooHigh = PROFILE_IONS.filter(ion => result[ion] > Math.max(profile.ions[ion] * 1.15, profile.ions[ion] + 10));
     solverNote = tooHigh.length > 0
         ? `Au-dessus de la cible : ${tooHigh.map(ion => PARAMETERS_OF_INTEREST[ion].label).join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée`
@@ -668,20 +731,45 @@ const applySuggestedAdditions = () => {
 
 // Saisies courantes du calculateur et eau modifiée correspondante
 const readCalculatorState = () => {
-    const liters = parseFloat(document.getElementById('waterQuantity').value);
-    const additions = {};
-    MINERAL_INPUT_IDS.forEach(id => {
-        additions[id] = parseFloat(document.getElementById(id).value) || 0;
-    });
+    const mashLiters = readVolume('mashVolume');
+    const spargeLiters = readVolume('spargeVolume');
+    const mashAdditions = readAdditions('mash');
+    const spargeAdditions = readAdditions('sparge');
+    const mashWater = calculateMineralAdditions(calculatorBaseWater, mashAdditions, mashLiters);
+    const spargeWater = calculateMineralAdditions(calculatorBaseWater, spargeAdditions, spargeLiters);
+    const waters = {
+        mash: mashWater,
+        sparge: spargeWater,
+        kettle: combineWaters([{ water: mashWater, liters: mashLiters }, { water: spargeWater, liters: spargeLiters }])
+    };
     const modeSelect = document.getElementById('baseWaterMode');
     return {
-        liters,
-        additions,
+        mashLiters,
+        spargeLiters,
+        totalLiters: mashLiters + spargeLiters,
+        mashAdditions,
+        spargeAdditions,
+        waters,
         mode: BASE_WATER_MODES[modeSelect ? modeSelect.value : 'derniere'],
         profile: getSelectedProfile(),
         baseWater: calculatorBaseWater,
-        modifiedWater: calculateMineralAdditions(calculatorBaseWater, additions, liters)
+        // Eau affichée dans le panneau
+        modifiedWater: waters[panelView]
     };
+};
+
+// Acidifier l'eau de rinçage avec l'acide choisi (neutralise ~90 % de son alcalinité)
+const acidifySparge = () => {
+    const acid = document.getElementById('solverAcid').value;
+    const liters = readVolume('spargeVolume');
+    if (!acid || !(liters > 0) || !calculatorBaseWater) return;
+    const additions = readAdditions('sparge');
+    Object.keys(ACIDS).forEach(id => { additions[id] = 0; });
+    const water = calculateMineralAdditions(calculatorBaseWater, additions, liters);
+    additions[acid] = spargeAcidAmount(water, liters, acid);
+    writeAdditions('sparge', additions);
+    editedWater = 'sparge';
+    updateCalculations();
 };
 
 // Commune et réseau sélectionnés (codes et libellés)
@@ -698,30 +786,41 @@ const mineralLabel = (id) => {
     return label ? label.textContent.replace(/\s+/g, ' ').trim() : id;
 };
 
-// Télécharger l'eau de base et l'eau modifiée au format BeerXML
+// Liste lisible des ajouts d'une eau
+const additionsText = (additions) => MINERAL_INPUT_IDS
+    .filter(id => additions[id] > 0)
+    .map(id => `${mineralLabel(id)} : ${formatValue(additions[id])} ${SALT_UNITS[id]}`)
+    .join(' ; ') || 'Aucun ajout.';
+
+// Télécharger l'eau du robinet, l'eau d'empâtage et l'eau de rinçage au format BeerXML
 const exportBeerXml = () => {
     if (!calculatorBaseWater) return;
     const state = readCalculatorState();
     const selection = readSelectionLabels();
-    const additionsText = MINERAL_INPUT_IDS
-        .filter(id => state.additions[id] > 0)
-        .map(id => `${mineralLabel(id)} : ${formatValue(state.additions[id])} ${SALT_UNITS[id]}`)
-        .join(' ; ');
-
-    const xml = toBeerXmlWaters([
+    const profileName = state.profile ? state.profile.name : 'sans profil';
+    const entries = [
         {
             name: `Robinet — ${selection.networkName} (${state.mode})`,
-            liters: state.liters,
+            liters: state.totalLiters,
             water: state.baseWater,
             notes: `${selection.communeName} — réseau ${selection.networkCode}. Sources : Hub'Eau / SISE-Eaux.`
         },
         {
-            name: `Modifiée — ${state.profile ? state.profile.name : 'sans profil'}`,
-            liters: state.liters,
-            water: state.modifiedWater,
-            notes: `Pour ${formatValue(state.liters)} L. ${additionsText || 'Aucun ajout.'}`
+            name: `Empâtage — ${profileName}`,
+            liters: state.mashLiters,
+            water: state.waters.mash,
+            notes: `Pour ${formatValue(state.mashLiters)} L. ${additionsText(state.mashAdditions)}`
         }
-    ]);
+    ];
+    if (state.spargeLiters > 0) {
+        entries.push({
+            name: `Rinçage — ${profileName}`,
+            liters: state.spargeLiters,
+            water: state.waters.sparge,
+            notes: `Pour ${formatValue(state.spargeLiters)} L. ${additionsText(state.spargeAdditions)}`
+        });
+    }
+    const xml = toBeerXmlWaters(entries);
 
     const url = URL.createObjectURL(new Blob([xml], { type: 'application/xml' }));
     const link = document.createElement('a');
@@ -770,23 +869,32 @@ const buildBrewSheet = () => {
     appendText(sheet, 'p', `${selection.communeName} — réseau ${selection.networkName} (${selection.networkCode})`);
     appendText(sheet, 'p', `Sources : ${currentReport.usedSources.map(s => s.name).join(' + ')}`
         + (currentReport.latestDate ? ` — dernier prélèvement : ${formatDate(currentReport.latestDate)}` : ''));
-    appendText(sheet, 'p', `Eau de base : ${state.mode} — volume : ${formatValue(state.liters || 0)} L — profil cible : ${state.profile ? state.profile.name : 'aucun'}`);
+    const hasSparge = state.spargeLiters > 0;
+    appendText(sheet, 'p', `Eau de base : ${state.mode} — empâtage : ${formatValue(state.mashLiters)} L`
+        + (hasSparge ? ` — rinçage : ${formatValue(state.spargeLiters)} L` : ' — sans rinçage')
+        + ` — profil cible : ${state.profile ? state.profile.name : 'aucun'}`);
 
-    appendText(sheet, 'h2', 'Ajouts (sels et acide)');
-    const salts = MINERAL_INPUT_IDS.filter(id => state.additions[id] > 0);
-    if (salts.length > 0) {
-        appendTable(sheet, ['Ajout', 'Quantité'], salts.map(id => [mineralLabel(id), `${formatValue(state.additions[id])} ${SALT_UNITS[id]}`]));
+    appendText(sheet, 'h2', 'Ajouts (sels et acides)');
+    const used = MINERAL_INPUT_IDS.filter(id => state.mashAdditions[id] > 0 || state.spargeAdditions[id] > 0);
+    const quantity = (additions, id) => (additions[id] > 0 ? `${formatValue(additions[id])} ${SALT_UNITS[id]}` : '—');
+    if (used.length > 0) {
+        appendTable(sheet, ['Ajout', 'Empâtage', ...(hasSparge ? ['Rinçage'] : [])], used.map(id => [
+            mineralLabel(id),
+            quantity(state.mashAdditions, id),
+            ...(hasSparge ? [quantity(state.spargeAdditions, id)] : [])
+        ]));
     } else {
         appendText(sheet, 'p', 'Aucun ajout.');
     }
 
     appendText(sheet, 'h2', 'Composition (mg/L)');
+    const columns = hasSparge ? ['mash', 'sparge', 'kettle'] : ['mash'];
     appendTable(sheet,
-        ['Paramètre', 'Eau de base', 'Eau modifiée', ...(state.profile ? [`Cible ${state.profile.name}`] : [])],
+        ['Paramètre', 'Robinet', ...columns.map(view => WATER_LABELS[view]), ...(state.profile ? [`Cible ${state.profile.name}`] : [])],
         PROFILE_IONS.map(ion => [
             PARAMETERS_OF_INTEREST[ion].label,
             round(state.baseWater[ion]),
-            round(state.modifiedWater[ion]),
+            ...columns.map(view => round(state.waters[view][ion])),
             ...(state.profile ? [formatValue(state.profile.ions[ion])] : [])
         ]));
 
@@ -795,11 +903,10 @@ const buildBrewSheet = () => {
         const value = calculateSulfateChlorideRatio(water);
         return value === null ? '—' : formatValue(Math.round(value * 100) / 100);
     };
-    appendTable(sheet, ['Indicateur', 'Eau de base', 'Eau modifiée'], [
-        ['Alcalinité résiduelle (mg/L CaCO₃)',
-            formatValue(Math.round(calculateResidualAlkalinity(state.baseWater))),
-            formatValue(Math.round(calculateResidualAlkalinity(state.modifiedWater)))],
-        ['Ratio SO₄ / Cl', ratio(state.baseWater), ratio(state.modifiedWater)]
+    const ra = (water) => formatValue(Math.round(calculateResidualAlkalinity(water)));
+    appendTable(sheet, ['Indicateur', 'Robinet', 'Empâtage', ...(hasSparge ? ['Ébullition'] : [])], [
+        ['Alcalinité résiduelle (mg/L CaCO₃)', ra(state.baseWater), ra(state.waters.mash), ...(hasSparge ? [ra(state.waters.kettle)] : [])],
+        ['Ratio SO₄ / Cl', ratio(state.baseWater), ratio(state.waters.mash), ...(hasSparge ? [ratio(state.waters.kettle)] : [])]
     ]);
 
     if (currentReport.qualityItems.length > 0) {
@@ -827,7 +934,16 @@ const renderCalculator = () => {
 // Attacher les écouteurs du calculateur une seule fois
 function initializeCalculator() {
     if (calculatorInitialized) return;
-    renderSaltInputs();
+    renderAdditionInputs('mash');
+    renderAdditionInputs('sparge');
+    document.querySelectorAll('#waterToggle button').forEach(button => {
+        button.addEventListener('click', () => { editedWater = button.dataset.water; updateCalculations(); });
+    });
+    document.querySelectorAll('#panelView button').forEach(button => {
+        button.addEventListener('click', () => { panelView = button.dataset.view; updateCalculations(); });
+    });
+    document.getElementById('acidifySparge').addEventListener('click', acidifySparge);
+    document.getElementById('solverAcid').addEventListener('change', updateCalculations);
 
     // Profils cibles
     const profileSelect = document.getElementById('targetProfile');
@@ -873,9 +989,10 @@ function initializeCalculator() {
     const printButton = document.getElementById('printSheet');
     if (printButton) printButton.addEventListener('click', printBrewSheet);
 
-    document.getElementById('waterQuantity').addEventListener('input', updateCalculations);
+    ['mashVolume', 'spargeVolume'].forEach(id => document.getElementById(id).addEventListener('input', updateCalculations));
     document.getElementById('resetAdditions').addEventListener('click', () => {
-        MINERAL_INPUT_IDS.forEach(id => { document.getElementById(id).value = '0'; });
+        writeAdditions('mash', {});
+        writeAdditions('sparge', {});
         solverNote = '';
         updateCalculations();
     });

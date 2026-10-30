@@ -177,7 +177,7 @@
                     <div class="space-y-6">
                         <!-- Étape 1 : eau de base et volume -->
                         <section class="glass-effect rounded-2xl p-4 md:p-6" aria-labelledby="calcStep1">
-                            <h3 id="calcStep1" class="text-lg font-semibold text-slate-200 mb-4 flex items-center"><span class="step-number">1</span>Eau de base et volume</h3>
+                            <h3 id="calcStep1" class="text-lg font-semibold text-slate-200 mb-4 flex items-center"><span class="step-number">1</span>Eau de base et volumes</h3>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label for="baseWaterMode" class="block text-sm font-medium text-slate-300 mb-2">Eau du réseau</label>
@@ -192,13 +192,24 @@
                                     </div>
                                     <p class="mt-2 text-xs text-slate-400">La composition varie au fil de l'année : le maximum donne une marge de sécurité.</p>
                                 </div>
-                                <div>
-                                    <label for="waterQuantity" class="block text-sm font-medium text-slate-300 mb-2">Volume d'eau</label>
-                                    <div class="relative">
-                                        <input type="number" id="waterQuantity" value="20" min="1" step="1" inputmode="decimal"
-                                            class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 pr-10 text-white font-mono text-lg focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500">
-                                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true">L</span>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="mashVolume" class="block text-sm font-medium text-slate-300 mb-2">Empâtage</label>
+                                        <div class="relative">
+                                            <input type="number" id="mashVolume" value="15" min="0" step="0.5" inputmode="decimal"
+                                                class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 pr-9 text-white font-mono text-lg focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500">
+                                            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true">L</span>
+                                        </div>
                                     </div>
+                                    <div>
+                                        <label for="spargeVolume" class="block text-sm font-medium text-slate-300 mb-2">Rinçage</label>
+                                        <div class="relative">
+                                            <input type="number" id="spargeVolume" value="10" min="0" step="0.5" inputmode="decimal"
+                                                class="w-full bg-slate-900/60 border border-slate-600 rounded-xl px-4 py-3 pr-9 text-white font-mono text-lg focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500">
+                                            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true">L</span>
+                                        </div>
+                                    </div>
+                                    <p id="volumeSummary" class="col-span-2 text-xs text-slate-400"></p>
                                 </div>
                             </div>
                         </section>
@@ -234,6 +245,17 @@
                                     <i class="fas fa-chevron-down text-xs absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" aria-hidden="true"></i>
                                 </div>
                             </div>
+                            <div class="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                                <label for="splitMode" class="text-sm text-slate-300">Répartition entre empâtage et rinçage</label>
+                                <div class="relative sm:ml-auto">
+                                    <select id="splitMode"
+                                        class="w-full sm:w-auto bg-slate-900/60 border border-slate-600 rounded-lg pl-3 pr-9 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500/60 appearance-none cursor-pointer">
+                                        <option value="proportionnel" selected>Proportionnelle aux volumes</option>
+                                        <option value="empatage">Tout dans l'empâtage</option>
+                                    </select>
+                                    <i class="fas fa-chevron-down text-xs absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" aria-hidden="true"></i>
+                                </div>
+                            </div>
                         </section>
 
                         <!-- Étape 3 : sels -->
@@ -244,10 +266,21 @@
                                     <i class="fas fa-rotate-left mr-1" aria-hidden="true"></i>Remettre à zéro
                                 </button>
                             </div>
-                            <!-- Champs générés par app.js (SALTS) -->
-                            <div id="saltInputs" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
-                            <h4 class="mt-6 mb-3 text-sm font-semibold text-slate-300">Acides (en mL)</h4>
-                            <div id="acidInputs" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+                            <div id="waterToggle" role="group" aria-label="Eau à laquelle s'appliquent les ajouts" class="flex flex-wrap gap-2 mb-4">
+                                <button type="button" class="toggle-button" data-water="mash" aria-pressed="true">Empâtage</button>
+                                <button type="button" class="toggle-button" data-water="sparge" aria-pressed="false">Rinçage</button>
+                            </div>
+                            <!-- Champs générés par app.js (SALTS), un jeu par eau -->
+                            <div id="mashAdditions"></div>
+                            <div id="spargeAdditions" class="hidden">
+                                <div class="mb-4 p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 flex flex-col sm:flex-row sm:items-center gap-3">
+                                    <p class="text-xs text-slate-300 flex-1">Acidifier l'eau de rinçage limite l'extraction de tanins : on neutralise ~90 % de son alcalinité (pH ≈ 5,5–6) avec l'acide choisi à l'étape 2.</p>
+                                    <button type="button" id="acidifySparge"
+                                        class="shrink-0 px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-400/60 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                                        <i class="fas fa-flask mr-2" aria-hidden="true"></i>Acidifier le rinçage
+                                    </button>
+                                </div>
+                            </div>
                             <div id="acidHint" class="mt-3 space-y-1 text-xs" aria-live="polite"></div>
                         </section>
                     </div>
@@ -266,6 +299,12 @@
                             <span class="inline-flex items-center gap-1"><span class="inline-block w-0.5 h-3 bg-white"></span>cible</span>
                         </p>
                         </div>
+                        <div id="panelView" role="group" aria-label="Eau affichée" class="flex flex-wrap gap-2 mb-3">
+                            <button type="button" class="toggle-button" data-view="mash" aria-pressed="false">Empâtage</button>
+                            <button type="button" class="toggle-button" data-view="sparge" aria-pressed="false">Rinçage</button>
+                            <button type="button" class="toggle-button" data-view="kettle" aria-pressed="true">Ébullition</button>
+                        </div>
+                        <p id="panelViewHint" class="mb-3 text-xs text-slate-400"></p>
                         <div id="ionBars" class="space-y-2" aria-live="polite"></div>
                         <p id="solverNote" class="hidden mt-4 text-xs text-amber-300"></p>
                         <div id="modifiedIndicators" class="mt-4 grid grid-cols-2 gap-2"></div>

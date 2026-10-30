@@ -180,13 +180,52 @@ const step = async (name, fn) => {
             await page.click('#suggestAdditions'); // ajouts NEIPA pour l'export et la fiche
         });
 
+        await step('empâtage et rinçage : répartition, eau affichée, acidification, BIAB', async () => {
+            const value = async (id) => parseFloat(await page.inputValue(id));
+            // Répartition proportionnelle (15 L + 10 L) : les deux eaux reçoivent des sels
+            assert.ok(await value('#calciumChloride') > 0);
+            assert.ok(await value('#sparge-calciumChloride') > 0, 'rinçage traité');
+            // Tout dans l'empâtage : rinçage sans sel, empâtage plus chargé
+            const proportionalMash = await value('#calciumChloride');
+            await page.selectOption('#splitMode', 'empatage');
+            await page.click('#suggestAdditions');
+            assert.equal(await value('#sparge-calciumChloride'), 0);
+            assert.ok(await value('#calciumChloride') > proportionalMash);
+            // Eau affichée : l'empâtage est plus minéralisé que le mélange en ébullition
+            const kettleCa = parseFloat((await page.innerText('#ionBars [data-ion="CALCIUM (CA)"] .ion-modified')).replace(',', '.'));
+            await page.click('#panelView button[data-view="mash"]');
+            assert.equal(await page.getAttribute('#panelView button[data-view="mash"]', 'aria-pressed'), 'true');
+            const mashCa = parseFloat((await page.innerText('#ionBars [data-ion="CALCIUM (CA)"] .ion-modified')).replace(',', '.'));
+            assert.ok(mashCa > kettleCa, `empâtage ${mashCa} > ébullition ${kettleCa}`);
+            // Acidification du rinçage avec l'acide choisi (AMS), depuis la saisie du rinçage
+            await page.click('#waterToggle button[data-water="sparge"]');
+            assert.equal(await page.isVisible('#mashAdditions'), false);
+            await page.click('#acidifySparge');
+            assert.ok(await page.isVisible('#spargeAdditions'));
+            assert.ok(await value('#sparge-ams') > 0, 'AMS dans le rinçage');
+            assert.match(await page.innerText('#acidHint'), /^Rinçage : les acides neutralisent/);
+            // Sans rinçage (BIAB) : bascule désactivée, saisie revenue à l'empâtage
+            await page.fill('#spargeVolume', '0');
+            await page.dispatchEvent('#spargeVolume', 'input');
+            assert.ok(await page.isDisabled('#waterToggle button[data-water="sparge"]'));
+            assert.ok(await page.isVisible('#mashAdditions'));
+            assert.match(await page.innerText('#volumeSummary'), /Sans rinçage/);
+            // Retour à la configuration par défaut pour la suite
+            await page.fill('#spargeVolume', '10');
+            await page.dispatchEvent('#spargeVolume', 'input');
+            await page.selectOption('#splitMode', 'proportionnel');
+            await page.click('#panelView button[data-view="kettle"]');
+            await page.click('#suggestAdditions');
+        });
+
         await step('export BeerXML : fichier avec eau de base et eau modifiée', async () => {
             const [download] = await Promise.all([page.waitForEvent('download'), page.click('#exportBeerXml')]);
             assert.equal(download.suggestedFilename(), 'eau-09122-009001053.xml');
             const xml = require('fs').readFileSync(await download.path(), 'utf8');
-            assert.equal((xml.match(/<WATER>/g) || []).length, 2);
+            assert.equal((xml.match(/<WATER>/g) || []).length, 3, 'robinet, empâtage, rinçage');
             assert.match(xml, /<CALCIUM>[\d.]+<\/CALCIUM>/);
-            assert.match(xml, /Modifiée — NEIPA/);
+            assert.match(xml, /Empâtage — NEIPA/);
+            assert.match(xml, /Rinçage — NEIPA/);
             assert.match(xml, /FOIX CENTRE VILLE/);
             assert.match(xml, /AMS \(acide de brassage\) HCl \+ H₂SO₄ : [\d,]+ mL/);
         });
@@ -202,6 +241,7 @@ const step = async (name, fn) => {
             assert.match(text, /FOIX CENTRE VILLE/);
             assert.match(text, /Chlorure de calcium/);
             assert.match(text, /AMS \(acide de brassage\).*\s+[\d,]+ mL/);
+            assert.match(text, /empâtage : 15 L — rinçage : 10 L/);
             assert.match(text, /Campden/);
             await page.emulateMedia({ media: 'screen' });
         });

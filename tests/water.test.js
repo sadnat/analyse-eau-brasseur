@@ -398,3 +398,51 @@ test('solveur : jamais d\'acide et de bicarbonate ensemble', () => {
         assert.ok(!(up[acid] > 0), `${acid} : pas d'acide pour Dublin`);
     }
 });
+
+// --- Empâtage et rinçage ---
+
+test('mélange de deux eaux : moyenne pondérée par les volumes', () => {
+    const mixed = w.combineWaters([
+        { water: { 'CALCIUM (CA)': 100, 'HCO3': 0 }, liters: 15 },
+        { water: { 'CALCIUM (CA)': 10, 'HCO3': 40, 'SODIUM (NA)': 5 }, liters: 10 }
+    ]);
+    approx(mixed['CALCIUM (CA)'], (100 * 15 + 10 * 10) / 25, 1e-9);
+    approx(mixed['HCO3'], 16, 1e-9);
+    approx(mixed['SODIUM (NA)'], 2, 1e-9);
+    // Rinçage nul (BIAB) : l'eau d'empâtage seule
+    assert.deepEqual(w.combineWaters([{ water: { 'CALCIUM (CA)': 50 }, liters: 20 }, { water: { 'CALCIUM (CA)': 0 }, liters: 0 }]), { 'CALCIUM (CA)': 50 });
+});
+
+test('répartition des ajouts : proportionnelle (concentrations identiques) ou tout à l\'empâtage', () => {
+    const amounts = { calciumSulfate: 5, calciumChloride: 2.5, ams: 2 };
+    const proportional = w.splitAdditions(amounts, 15, 10);
+    assert.deepEqual(proportional.mash, { calciumSulfate: 3, calciumChloride: 1.5, ams: 1 });
+    assert.deepEqual(proportional.sparge, { calciumSulfate: 2, calciumChloride: 1, ams: 1 });
+    const mashOnly = w.splitAdditions(amounts, 15, 10, 'empatage');
+    assert.deepEqual(mashOnly.mash, amounts);
+    assert.deepEqual(mashOnly.sparge, { calciumSulfate: 0, calciumChloride: 0, ams: 0 });
+    assert.deepEqual(w.splitAdditions(amounts, 20, 0).mash, amounts, 'sans rinçage : tout à l\'empâtage');
+});
+
+test('répartition proportionnelle : l\'eau d\'ébullition reste celle visée', () => {
+    const target = w.WATER_PROFILES.houblonne.ions;
+    const amounts = w.solveMineralAdditions(SOFT_WATER, target, 25, { acid: 'ams' });
+    const { mash, sparge } = w.splitAdditions(amounts, 15, 10);
+    const kettle = w.combineWaters([
+        { water: w.calculateMineralAdditions(SOFT_WATER, mash, 15), liters: 15 },
+        { water: w.calculateMineralAdditions(SOFT_WATER, sparge, 10), liters: 10 }
+    ]);
+    const whole = w.calculateMineralAdditions(SOFT_WATER, amounts, 25);
+    w.PROFILE_IONS.forEach(ion => approx(kettle[ion], whole[ion], Math.max(whole[ion] * 0.05, 1), ion));
+});
+
+test('acidification du rinçage : 90 % de l\'alcalinité neutralisés', () => {
+    // 10 L à 244 mg/L HCO3 (4 meq/L) → 36 meq ; AMS 4,09 meq/mL → 8,8 → 9 mL (pas de 0,5)
+    assert.equal(w.spargeAcidAmount({ 'HCO3': 244.08 }, 10, 'ams'), 9);
+    const lactic = w.spargeAcidAmount({ 'HCO3': 244.08 }, 10, 'lactic80');
+    approx(lactic, 36 / 10.36, 0.1);
+    const after = w.calculateMineralAdditions({ 'HCO3': 244.08 }, { lactic80: lactic }, 10);
+    approx(after['HCO3'], 24.4, 3); // ~10 % restants
+    assert.equal(w.spargeAcidAmount({ 'HCO3': 100 }, 0, 'ams'), 0);
+    assert.equal(w.spargeAcidAmount({ 'HCO3': 100 }, 10, null), 0);
+});

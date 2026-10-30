@@ -91,6 +91,11 @@ Onglet « Calculateur » : 3 étapes (eau de base et volume, profil cible, sels)
   - Phosphorique 75 % (densité 1,579) → 12,27 meq/mL ; lactique 80 % (densité 1,20) → 10,36 meq/mL et 949 mg de lactate/mL (alerte au-delà de `LACTATE_TASTE_THRESHOLD`, 400 mg/L)
   - `calculateMineralAdditions()` neutralise les bicarbonates (bornés à 0, TAC ajusté) ; `acidEffect()` → alcalinité neutralisée et excès d'acide (`#acidHint`)
   - Solveur : option `acid` (sélecteur `#solverAcid`, AMS par défaut) ; acide seulement si la cible demande de baisser les bicarbonates, bicarbonate seulement pour les monter, jamais les deux
+- **Empâtage et rinçage** : deux volumes (`#mashVolume`, `#spargeVolume` ; 0 L de rinçage = BIAB) et deux jeux d'ajouts. Les champs d'empâtage gardent l'identifiant simple (`calciumSulfate`), ceux du rinçage sont préfixés (`sparge-calciumSulfate`, via `additionInputId()`). Bascule de saisie `#waterToggle` (`editedWater`)
+  - État (`readCalculatorState()`) : `waters.mash`, `waters.sparge`, `waters.kettle` (mélange pondéré par les volumes, `combineWaters()`) ; le panneau affiche l'eau choisie dans `#panelView` (`panelView`, « Ébullition » par défaut : c'est ce profil qui se compare à la cible)
+  - Solveur : calcul pour le volume total puis `splitAdditions()` (proportionnelle aux volumes, ou tout dans l'empâtage, `#splitMode`)
+  - « Acidifier le rinçage » : `spargeAcidAmount()` neutralise `SPARGE_NEUTRALIZATION` (90 %) de l'alcalinité de l'eau de rinçage avec l'acide de `#solverAcid`
+  - Export BeerXML : robinet + empâtage + rinçage ; fiche : ajouts par eau et composition des trois eaux
 - `renderIonBars()` : barre de l'eau de base, barre après ajouts colorée selon `profileDeviation()` (water.js), repère de cible ; `renderCompactIndicators()` pour le panneau
 - Garder le panneau plus court que la colonne des étapes, sinon il ne peut plus rester collé
 - Mobile : résumé fixe `#calcSummaryBar` en bas d'écran, visible seulement quand l'onglet calculateur l'est (il est dans le panneau d'onglet)
