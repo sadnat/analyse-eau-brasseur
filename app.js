@@ -450,7 +450,7 @@ let calculatorBaseWaters = null;
 let calculatorBaseWater = null;
 let calculatorInitialized = false;
 
-// Sels du calculateur (les identifiants sont les clés de MINERAL_CONVERSIONS)
+// Ajouts du calculateur : sels en grammes (identifiants = clés de MINERAL_CONVERSIONS) et AMS en mL
 const SALTS = [
     { id: 'calciumSulfate', name: 'Sulfate de calcium (gypse)', formula: 'CaSO₄·2H₂O' },
     { id: 'magnesiumSulfate', name: 'Sulfate de magnésium (sel d\'Epsom)', formula: 'MgSO₄·7H₂O' },
@@ -458,9 +458,11 @@ const SALTS = [
     { id: 'sodiumChloride', name: 'Chlorure de sodium', formula: 'NaCl' },
     { id: 'calciumCarbonate', name: 'Carbonate de calcium (craie)', formula: 'CaCO₃' },
     { id: 'sodiumBicarbonate', name: 'Bicarbonate de sodium', formula: 'NaHCO₃' },
-    { id: 'potassiumChloride', name: 'Chlorure de potassium', formula: 'KCl' }
+    { id: 'potassiumChloride', name: 'Chlorure de potassium', formula: 'KCl' },
+    { id: 'ams', name: 'AMS (acide de brassage)', formula: 'HCl + H₂SO₄', unit: 'mL', step: 0.5 }
 ];
 const MINERAL_INPUT_IDS = SALTS.map(salt => salt.id);
+const SALT_UNITS = Object.fromEntries(SALTS.map(salt => [salt.id, salt.unit || 'g']));
 const SALT_STEP = 0.1;
 
 // Champs de sels avec boutons −/+ (générés une seule fois)
@@ -484,7 +486,9 @@ const renderSaltInputs = () => {
         input.id = salt.id;
         input.value = '0';
         input.min = '0';
-        input.step = String(SALT_STEP);
+        const step = salt.step || SALT_STEP;
+        const unitLabel = salt.unit || 'g';
+        input.step = String(step);
         input.inputMode = 'decimal';
         input.className = 'min-w-0 flex-1 bg-transparent px-3 py-2.5 text-white font-mono text-center focus:outline-none';
         const stepButton = (delta, symbol, action) => {
@@ -492,7 +496,7 @@ const renderSaltInputs = () => {
             button.type = 'button';
             button.className = 'w-11 shrink-0 text-lg text-slate-300 hover:text-white hover:bg-slate-700/60 focus:outline-none focus-visible:bg-slate-700';
             button.textContent = symbol;
-            button.setAttribute('aria-label', `${action} ${salt.name} de ${formatValue(SALT_STEP)} g`);
+            button.setAttribute('aria-label', `${action} ${salt.name} de ${formatValue(step)} ${unitLabel}`);
             button.addEventListener('click', () => {
                 const next = Math.max(0, Math.round(((parseFloat(input.value) || 0) + delta) * 10) / 10);
                 input.value = String(next);
@@ -503,11 +507,18 @@ const renderSaltInputs = () => {
         const unit = document.createElement('span');
         unit.className = 'self-center pr-1 text-slate-400 text-sm';
         unit.setAttribute('aria-hidden', 'true');
-        unit.textContent = 'g';
-        row.append(stepButton(-SALT_STEP, '−', 'Diminuer'), input, unit, stepButton(SALT_STEP, '+', 'Augmenter'));
+        unit.textContent = unitLabel;
+        row.append(stepButton(-step, '−', 'Diminuer'), input, unit, stepButton(step, '+', 'Augmenter'));
         input.addEventListener('input', updateCalculations);
 
         field.append(label, row);
+        if (salt.id === 'ams') {
+            // Effet de l'acide sur l'alcalinité, mis à jour par updateCalculations
+            const hint = document.createElement('p');
+            hint.id = 'amsHint';
+            hint.className = 'mt-1 text-xs text-slate-400';
+            field.appendChild(hint);
+        }
         container.appendChild(field);
     });
 };
@@ -581,6 +592,28 @@ const renderSummaryBar = (water) => {
         + (ratio === null ? '' : ` · SO₄/Cl ${formatValue(Math.round(ratio * 100) / 100)}`);
 };
 
+// Effet de l'AMS : alcalinité neutralisée et éventuel excès d'acide
+const renderAmsHint = (state) => {
+    const hint = document.getElementById('amsHint');
+    if (!hint) return;
+    const ml = state.additions.ams;
+    hint.className = 'mt-1 text-xs text-slate-400';
+    if (!(ml > 0)) {
+        hint.textContent = '1 mL par litre neutralise ≈ 205 mg/L CaCO₃ d\'alcalinité et apporte 70 mg/L de chlorures et 98 mg/L de sulfates.';
+        return;
+    }
+    // Alcalinité disponible : eau de base + bicarbonates éventuellement ajoutés (avant acide)
+    const withoutAcid = calculateMineralAdditions(state.baseWater, { ...state.additions, ams: 0 }, state.liters);
+    const { neutralized, excess } = amsEffect(ml, state.liters, withoutAcid['HCO3']);
+    const fmt = (v) => formatValue(Math.round(v));
+    if (excess > 1) {
+        hint.className = 'mt-1 text-xs text-amber-300';
+        hint.textContent = `Toute l'alcalinité est neutralisée (${fmt(neutralized)} mg/L CaCO₃) ; l'excès d'acide (${fmt(excess)} mg/L CaCO₃) abaissera directement le pH de la maische.`;
+    } else {
+        hint.textContent = `Neutralise ${fmt(neutralized)} mg/L CaCO₃ d'alcalinité, sur ${fmt(withoutAcid['HCO3'] / 61.02 * 50.04)} disponibles.`;
+    }
+};
+
 // Recalculer et afficher l'eau modifiée à partir des saisies
 const updateCalculations = () => {
     if (!calculatorBaseWater) return;
@@ -590,6 +623,7 @@ const updateCalculations = () => {
     document.getElementById('legendNeutral').classList.toggle('hidden', Boolean(state.profile));
     document.getElementById('legendDeviation').classList.toggle('hidden', !state.profile);
     renderCompactIndicators(document.getElementById('modifiedIndicators'), state.modifiedWater);
+    renderAmsHint(state);
     renderSummaryBar(state.modifiedWater);
     const note = document.getElementById('solverNote');
     note.textContent = solverNote;
@@ -611,7 +645,8 @@ const applySuggestedAdditions = () => {
     const liters = parseFloat(document.getElementById('waterQuantity').value);
     if (!profile || !calculatorBaseWater || !(liters > 0)) return;
 
-    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters);
+    const useAms = document.getElementById('solverUseAms').checked;
+    const grams = solveMineralAdditions(calculatorBaseWater, profile.ions, liters, { useAms });
     MINERAL_INPUT_IDS.forEach(id => {
         document.getElementById(id).value = grams[id] || 0;
     });
@@ -620,7 +655,8 @@ const applySuggestedAdditions = () => {
     const result = calculateMineralAdditions(calculatorBaseWater, grams, liters);
     const tooHigh = PROFILE_IONS.filter(ion => result[ion] > Math.max(profile.ions[ion] * 1.15, profile.ions[ion] + 10));
     solverNote = tooHigh.length > 0
-        ? `Au-dessus de la cible : ${tooHigh.map(ion => PARAMETERS_OF_INTEREST[ion].label).join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée.`
+        ? `Au-dessus de la cible : ${tooHigh.map(ion => PARAMETERS_OF_INTEREST[ion].label).join(', ')}. Les ajouts ne peuvent pas réduire ces ions — diluez avec de l'eau osmosée ou déminéralisée`
+            + (!useAms && tooHigh.includes('HCO3') ? ', ou autorisez l\'AMS pour neutraliser les bicarbonates.' : '.')
         : '';
 
     updateCalculations();
@@ -665,7 +701,7 @@ const exportBeerXml = () => {
     const selection = readSelectionLabels();
     const additionsText = MINERAL_INPUT_IDS
         .filter(id => state.additions[id] > 0)
-        .map(id => `${mineralLabel(id)} : ${formatValue(state.additions[id])} g`)
+        .map(id => `${mineralLabel(id)} : ${formatValue(state.additions[id])} ${SALT_UNITS[id]}`)
         .join(' ; ');
 
     const xml = toBeerXmlWaters([
@@ -732,10 +768,10 @@ const buildBrewSheet = () => {
         + (currentReport.latestDate ? ` — dernier prélèvement : ${formatDate(currentReport.latestDate)}` : ''));
     appendText(sheet, 'p', `Eau de base : ${state.mode} — volume : ${formatValue(state.liters || 0)} L — profil cible : ${state.profile ? state.profile.name : 'aucun'}`);
 
-    appendText(sheet, 'h2', 'Ajouts de sels');
+    appendText(sheet, 'h2', 'Ajouts (sels et acide)');
     const salts = MINERAL_INPUT_IDS.filter(id => state.additions[id] > 0);
     if (salts.length > 0) {
-        appendTable(sheet, ['Sel', 'Quantité'], salts.map(id => [mineralLabel(id), `${formatValue(state.additions[id])} g`]));
+        appendTable(sheet, ['Ajout', 'Quantité'], salts.map(id => [mineralLabel(id), `${formatValue(state.additions[id])} ${SALT_UNITS[id]}`]));
     } else {
         appendText(sheet, 'p', 'Aucun ajout.');
     }

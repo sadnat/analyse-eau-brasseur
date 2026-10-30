@@ -128,9 +128,20 @@ const step = async (name, fn) => {
             assert.ok(parseFloat(await page.inputValue('#calciumChloride')) > 0);
             assert.match(await page.innerText('#ionBars'), /Chlorures/);
             assert.match(await page.getAttribute('#ionBars [data-ion="CHLORURES"] [role="img"]', 'aria-label'), /cible 150 mg\/L/);
-            assert.match(await page.innerText('#solverNote'), /Bicarbonates/);
             assert.ok(await page.isVisible('#legendDeviation'));
             assert.equal(await page.isVisible('#legendNeutral'), false);
+            // Avec l'AMS (par défaut) : bicarbonates ramenés vers la cible, pas d'avertissement
+            assert.ok(parseFloat(await page.inputValue('#ams')) > 0, 'AMS suggéré');
+            assert.equal(await page.isVisible('#solverNote'), false);
+            assert.match(await page.innerText('#amsHint'), /Neutralise \d+ mg\/L CaCO₃/);
+            assert.match(await page.getAttribute('#ionBars [data-ion="HCO3"] [role="img"]', 'aria-label'), /conforme à la cible/);
+            // Sans l'AMS : les bicarbonates restent trop hauts et l'AMS est proposé
+            await page.uncheck('#solverUseAms');
+            await page.click('#suggestAdditions');
+            assert.equal(await page.inputValue('#ams'), '0');
+            assert.match(await page.innerText('#solverNote'), /Bicarbonates.*autorisez l'AMS/);
+            await page.check('#solverUseAms');
+            await page.click('#suggestAdditions');
         });
 
         await step('eau de base : le maximum 12 mois change le calcium de base', async () => {
@@ -166,6 +177,7 @@ const step = async (name, fn) => {
             assert.match(xml, /<CALCIUM>[\d.]+<\/CALCIUM>/);
             assert.match(xml, /Modifiée — NEIPA/);
             assert.match(xml, /FOIX CENTRE VILLE/);
+            assert.match(xml, /AMS \(acide de brassage\) HCl \+ H₂SO₄ : [\d,]+ mL/);
         });
 
         await step('fiche imprimable : seule visible à l\'impression, avec réseau et sels', async () => {
@@ -178,6 +190,7 @@ const step = async (name, fn) => {
             const text = await page.innerText('#brewSheet');
             assert.match(text, /FOIX CENTRE VILLE/);
             assert.match(text, /Chlorure de calcium/);
+            assert.match(text, /AMS \(acide de brassage\).*\s+[\d,]+ mL/);
             assert.match(text, /Campden/);
             await page.emulateMedia({ media: 'screen' });
         });

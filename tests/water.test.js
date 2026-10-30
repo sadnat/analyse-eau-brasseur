@@ -323,3 +323,41 @@ test('écart à la cible : tolérance de 15 % (10 mg/L au moins)', () => {
     assert.equal(w.profileDeviation(200, 100), 'loin');
     assert.equal(w.profileDeviation(155, 150), 'ok');
 });
+
+// --- AMS ---
+
+test('AMS : analyse cohérente, 1 mL/L ≈ 205 mg/L CaCO3 neutralisés, +70,5 Cl, +97,7 SO4', () => {
+    // Acide porté par les anions mesurés ≈ acidité déclarée (exprimée en H2SO4)
+    approx(w.AMS_PER_ML.chloride / 35.453 + 2 * w.AMS_PER_ML.sulfate / 96.06, w.AMS_PER_ML.acidMeq, 0.1);
+    const result = w.calculateMineralAdditions({ 'HCO3': 300, 'TAC': 24.6, 'CHLORURES': 10 }, { ams: 1 }, 1);
+    approx(result['CHLORURES'], 80.5, 0.1);
+    approx(result['SULFATES (SO4)'], 97.65, 0.1);
+    approx(result['HCO3'], 300 - 249.8, 0.5);
+    approx(result['TAC'], 24.6 - 20.5, 0.1);
+    approx(w.amsEffect(1, 1, 300).neutralized, 204.8, 0.5);
+});
+
+test('AMS : alcalinité épuisée → bicarbonates à zéro et excès d\'acide signalé', () => {
+    const result = w.calculateMineralAdditions({ 'HCO3': 61.02, 'TAC': 5 }, { ams: 10 }, 20);
+    assert.equal(result['HCO3'], 0);
+    assert.equal(result['TAC'], 0);
+    const effect = w.amsEffect(10, 20, 61.02);
+    approx(effect.neutralized, 50.04, 0.01);
+    approx(effect.excess, 10 * w.AMS_PER_ML.acidMeq / 20 * 50.04 - 50.04, 0.01);
+});
+
+test('AMS : neutralise aussi le bicarbonate ajouté (ordre des ajouts indifférent)', () => {
+    const result = w.calculateMineralAdditions({ 'HCO3': 0 }, { sodiumBicarbonate: 1, ams: 1 }, 10);
+    approx(result['HCO3'], 72.64 - 4.09 * 61.02 / 10, 0.5);
+});
+
+test('solveur avec AMS : atteint une cible de bicarbonates plus basse que l\'eau de base', () => {
+    const target = w.WATER_PROFILES.neipa.ions; // HCO3 30 < 40,87 dans l'eau de Foix
+    const without = w.solveMineralAdditions(SOFT_WATER, target, 20);
+    assert.equal(without.ams, undefined);
+    const amounts = w.solveMineralAdditions(SOFT_WATER, target, 20, { useAms: true });
+    assert.ok(amounts.ams > 0);
+    assert.equal(amounts.ams * 2, Math.round(amounts.ams * 2), 'arrondi à 0,5 mL');
+    const result = w.calculateMineralAdditions(SOFT_WATER, amounts, 20);
+    w.PROFILE_IONS.forEach(ion => approx(result[ion], target[ion], Math.max(target[ion] * 0.15, 10), ion));
+});
